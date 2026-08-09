@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the Release workflow failing when the tag did not exist yet. A manual run now
+  releases the version `main` is on and creates the tag itself once every check passes,
+  so merging a release PR and running the workflow is the whole flow.
+- Fixed Prepare release failing outright when the repository does not let GitHub Actions
+  open pull requests. It now finishes the bump, pushes the validated release branch, and
+  links to the PR form instead.
+
 ## [2.1.3] - 2026-08-09
 
 ### Added

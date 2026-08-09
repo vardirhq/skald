@@ -12,8 +12,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build, for example v2.2.0 (the tag must already exist)'
-        required: true
+        description: 'Tag to release. Leave empty to release the version currently on main, creating the tag if it does not exist yet.'
+        required: false
         type: string
       draft:
         description: 'Publish as a draft instead of a public release'
@@ -39,31 +39,63 @@ jobs:
   verify:
     name: Verify tag, version, and changelog
     runs-on: ubuntu-latest
+    permissions:
+      # Needed only to create the tag on a manual run that does not have one yet.
+      contents: write
     outputs:
-      tag: ${{ steps.check.outputs.tag }}
+      tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.check.outputs.version }}
       prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          # A tag push verifies that tag's own commit. A manual run starts from main
+          # so the tag can be created here, after the checks pass.
+          ref: ${{ github.event_name == 'push' && github.ref || 'main' }}
           fetch-depth: 0
-          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
+      - name: Resolve the release commit
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = 'push' ]; then
+            TAG="$REF_NAME"
+          elif [ -n "$INPUT_TAG" ]; then
+            TAG="v${INPUT_TAG#v}"
+          else
+            # The usual case straight after a release PR merges: release whatever
+            # version main is now sitting on.
+            TAG="v$(node tools/release.mjs version)"
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git checkout --detach "$TAG"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG already exists; verifying the commit it points at."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "$TAG does not exist yet; it will be created from main once the checks pass."
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Check release metadata
         id: check
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: node tools/release.mjs check --tag "$TAG"
 
       - name: Require the tag to be on main
         if: ${{ !inputs.allow_unmerged }}
         env:
-          TAG: ${{ steps.check.outputs.tag }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           SHA="$(git rev-parse HEAD)"
@@ -78,7 +110,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ steps.check.outputs.tag }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           STATE="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo 'absent')"
           if [ "$STATE" = "false" ]; then
@@ -97,6 +129,22 @@ jobs:
           name: release-notes
           path: release-notes.md
           if-no-files-found: error
+
+      # Last, so the tag only ever appears once everything above has passed. A tag
+      # pushed here cannot re-trigger this workflow, which is exactly why the rest of
+      # the run continues in the same job graph rather than waiting for the push.
+      - name: Create the tag
+        if: steps.resolve.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "Skald $VERSION"
+          git push origin "refs/tags/$TAG"
+          echo "Created $TAG at $(git rev-parse HEAD)."
 
   build:
     name: Build Linux ${{ matrix.arch }}

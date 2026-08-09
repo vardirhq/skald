@@ -124,20 +124,47 @@ jobs:
             echo
             echo '## After merging'
             echo
+            echo 'Run the **Release** workflow (Actions → Release → Run workflow) and leave the tag'
+            echo "empty. It re-verifies the version on main, creates \`$TAG\`, builds the Linux"
+            echo 'artifacts, and publishes the GitHub release.'
+            echo
+            echo 'Tagging by hand does the same thing:'
+            echo
             echo '```bash'
             echo 'git checkout main && git pull'
             echo "git tag $TAG"
             echo "git push origin $TAG"
             echo '```'
-            echo
-            echo 'That tag starts the Release workflow, which re-verifies the version, builds the'
-            echo 'Linux artifacts, and publishes the GitHub release.'
           } > pr-body.md
 
           EXISTING="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
           if [ -n "$EXISTING" ]; then
             gh pr edit "$EXISTING" --title "Release $VERSION" --body-file pr-body.md
-            echo "Updated PR #$EXISTING"
+            PR_URL="$(gh pr view "$EXISTING" --json url --jq .url)"
+          elif PR_URL="$(gh pr create --base main --head "$BRANCH" --title "Release $VERSION" --body-file pr-body.md 2> pr-error.txt)"; then
+            :
+          elif grep -q 'not permitted to create or approve pull requests' pr-error.txt; then
+            # The branch is pushed and fully validated; only opening the PR is blocked.
+            cat pr-error.txt >&2
+            echo "::warning::GitHub Actions cannot open pull requests in this repository. The release branch is ready — open the PR from the link in the job summary."
+            {
+              echo "### Release $VERSION is ready on \`$BRANCH\`"
+              echo
+              echo 'GitHub Actions is not allowed to open pull requests here. Enable **Settings →'
+              echo 'Actions → General → Workflow permissions → Allow GitHub Actions to create and'
+              echo 'approve pull requests**, or open it yourself:'
+              echo
+              echo "https://github.com/$GH_REPO/compare/main...$BRANCH?expand=1"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           else
-            gh pr create --base main --head "$BRANCH" --title "Release $VERSION" --body-file pr-body.md
+            cat pr-error.txt >&2
+            exit 1
           fi
+
+          echo "Release PR: $PR_URL"
+          {
+            echo "### Release $VERSION is ready"
+            echo
+            echo "$PR_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
