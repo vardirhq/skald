@@ -1,31 +1,120 @@
 name: Release
 
+# Tag-driven releases. The tag is the trigger, but `tools/release.mjs check` is the
+# gate: package.json, package-lock.json, and CHANGELOG.md must all agree with the tag
+# before anything is built or published.
+
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build, for example v2.1.0'
+        description: 'Release tag to build, for example v2.2.0 (the tag must already exist)'
         required: true
         type: string
+      draft:
+        description: 'Publish as a draft instead of a public release'
+        type: boolean
+        default: false
+      allow_unmerged:
+        description: 'Allow a tag that is not on main (hotfix branches)'
+        type: boolean
+        default: false
+      replace_existing:
+        description: 'Overwrite a release that is already published for this tag'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref_name || inputs.tag }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build Linux release
+  verify:
+    name: Verify tag, version, and changelog
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check release metadata
+        id: check
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: node tools/release.mjs check --tag "$TAG"
+
+      - name: Require the tag to be on main
+        if: ${{ !inputs.allow_unmerged }}
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          SHA="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$TAG ($SHA) is not an ancestor of main. Merge the release commit first, or re-run with allow_unmerged." >&2
+            exit 1
+          fi
+          echo "$TAG is on main at $SHA."
+
+      - name: Require the release to be unpublished
+        if: ${{ !inputs.replace_existing }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          STATE="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo 'absent')"
+          if [ "$STATE" = "false" ]; then
+            echo "::error::A published release already exists for $TAG. Re-run with replace_existing to overwrite it." >&2
+            exit 1
+          fi
+          echo "No published release for $TAG (state: $STATE)."
+
+      - name: Extract release notes
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: node tools/release.mjs notes --version "$VERSION" --out release-notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  build:
+    name: Build Linux ${{ matrix.arch }}
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [x64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -34,46 +123,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Resolve release version
-        id: version
-        shell: bash
-        run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          VERSION="${TAG#v}"
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-
-          if [[ "$TAG" != v*.*.* ]]; then
-            echo "Release tags must look like v2.1.0; got $TAG" >&2
-            exit 1
-          fi
-
-          if [[ "$PACKAGE_VERSION" != "$VERSION" ]]; then
-            echo "package.json version ($PACKAGE_VERSION) does not match tag ($VERSION)" >&2
-            exit 1
-          fi
-
-          if ! grep -Fq "## [$VERSION]" CHANGELOG.md; then
-            echo "CHANGELOG.md is missing a section for $VERSION" >&2
-            exit 1
-          fi
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare release notes
-        shell: bash
-        run: |
-          awk -v version="${{ steps.version.outputs.version }}" '
-            index($0, "## [" version "]") == 1 { capture = 1; next }
-            capture && /^## \[/ { exit }
-            capture { print }
-          ' CHANGELOG.md > release-notes.md
-
-          if ! grep -q '[^[:space:]]' release-notes.md; then
-            echo "No release notes found for ${{ steps.version.outputs.version }}" >&2
-            exit 1
-          fi
 
       - name: Typecheck
         run: npm run typecheck
@@ -85,23 +134,84 @@ jobs:
         run: npm run build
 
       - name: Package Linux artifacts
-        run: npx electron-builder --linux AppImage deb --x64 --publish never
+        run: npx electron-builder --linux AppImage deb --${{ matrix.arch }} --publish never
 
-      - name: Upload packaged artifacts
-        uses: actions/upload-artifact@v4
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
         with:
-          name: skald-${{ steps.version.outputs.version }}-linux-x64
+          subject-path: |
+            release/*.AppImage
+            release/*.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skald-${{ needs.verify.outputs.version }}-linux-${{ matrix.arch }}
           path: |
             release/*.AppImage
             release/*.deb
           if-no-files-found: error
 
+  publish:
+    name: Publish GitHub release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: skald-*-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Build release body
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Written from inside dist/ so the file names in it are unqualified and
+          # `sha256sum -c SHA256SUMS.txt` works next to the downloaded artifacts.
+          (cd dist && sha256sum -- *.AppImage *.deb > SHA256SUMS.txt)
+
+          {
+            cat notes/release-notes.md
+            echo
+            echo '## Install'
+            echo
+            echo '**AppImage** — `chmod +x Skald-*.AppImage` then run it.'
+            echo
+            echo '**Debian / Ubuntu** — `sudo apt install ./skald_*_amd64.deb`'
+            echo
+            echo '## Checksums'
+            echo
+            echo '```'
+            cat dist/SHA256SUMS.txt
+            echo '```'
+            echo
+            echo "Artifacts carry a [build provenance attestation](https://github.com/vardirhq/skald/attestations); verify with \`gh attestation verify <file> --repo vardirhq/skald\`."
+            echo
+            echo "**Full changelog**: https://github.com/vardirhq/skald/blob/$TAG/CHANGELOG.md"
+          } > body.md
+
+          cat body.md
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Skald ${{ steps.version.outputs.version }}
-          body_path: release-notes.md
+          tag_name: ${{ needs.verify.outputs.tag }}
+          name: Skald ${{ needs.verify.outputs.version }}
+          body_path: body.md
+          draft: ${{ inputs.draft || false }}
+          prerelease: ${{ needs.verify.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.verify.outputs.prerelease == 'true' && 'false' || 'true' }}
+          fail_on_unmatched_files: true
           files: |
-            release/*.AppImage
-            release/*.deb
+            dist/*.AppImage
+            dist/*.deb
+            dist/SHA256SUMS.txt

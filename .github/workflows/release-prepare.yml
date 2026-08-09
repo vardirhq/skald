@@ -1,0 +1,143 @@
+name: Prepare release
+
+# Cuts the next version in one shot: bumps package.json and package-lock.json, dates
+# the [Unreleased] changelog section, opens a fresh one, and rewrites the changelog
+# link references — then opens a PR with the whole thing already validated.
+#
+# Merge the PR, then push the tag it names to trigger the Release workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'How to bump the version'
+        type: choice
+        options: [patch, minor, major, custom]
+        default: patch
+      version:
+        description: 'Explicit version when bump is "custom", for example 2.2.0 or 3.0.0-rc.1'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-prepare
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Bump version and open release PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Resolve the bump
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$BUMP" = "custom" ]; then
+            if [ -z "$VERSION" ]; then
+              echo "::error::bump is \"custom\" but no version was given." >&2
+              exit 1
+            fi
+            echo "arg=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "arg=$BUMP" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare the release
+        id: prepare
+        run: node tools/release.mjs prepare "${{ steps.bump.outputs.arg }}"
+
+      - name: Verify the prepared tree
+        run: node tools/release.mjs check --tag "${{ steps.prepare.outputs.tag }}"
+
+      # A PR opened with GITHUB_TOKEN does not start CI, so the release commit is
+      # validated here instead of arriving unchecked.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit to the release branch
+        env:
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # Pick up any earlier attempt at this branch so --force-with-lease has a
+          # lease to check against, then replace it.
+          git fetch --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
+
+          git checkout -B "$BRANCH"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "Release $VERSION" -m "Bump package.json, package-lock.json, and CHANGELOG.md to $VERSION."
+          git push --force-with-lease -u origin "$BRANCH"
+
+      - name: Open the release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+          PREVIOUS: ${{ steps.prepare.outputs.previous }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          node tools/release.mjs notes --version "$VERSION" --out release-notes.md
+
+          {
+            echo "Releases Skald **$VERSION** (up from $PREVIOUS)."
+            echo
+            echo '`package.json`, `package-lock.json`, and `CHANGELOG.md` were bumped together by'
+            echo '`tools/release.mjs prepare`, and typecheck, tests, and the build all passed on this'
+            echo 'commit before the PR was opened.'
+            echo
+            echo '## Changelog'
+            echo
+            cat release-notes.md
+            echo
+            echo '## After merging'
+            echo
+            echo '```bash'
+            echo 'git checkout main && git pull'
+            echo "git tag $TAG"
+            echo "git push origin $TAG"
+            echo '```'
+            echo
+            echo 'That tag starts the Release workflow, which re-verifies the version, builds the'
+            echo 'Linux artifacts, and publishes the GitHub release.'
+          } > pr-body.md
+
+          EXISTING="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --title "Release $VERSION" --body-file pr-body.md
+            echo "Updated PR #$EXISTING"
+          else
+            gh pr create --base main --head "$BRANCH" --title "Release $VERSION" --body-file pr-body.md
+          fi

@@ -18,11 +18,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added an opening animation to the Constellation: stars fade in from the most
   connected outwards, then the threads between them. Honours reduced-motion settings.
 
+### Changed
+
+- The release version now lives in one tool: `tools/release.mjs` bumps `package.json`,
+  `package-lock.json`, and `CHANGELOG.md` together, and `npm run release:check` runs in CI
+  so the three can never drift apart again. Added a **Prepare release** workflow that cuts
+  a version and opens a validated release PR, and hardened the **Release** workflow with a
+  fast verification job, an on-main tag check, published-release protection, build
+  provenance attestations, and `SHA256SUMS.txt` on every release.
+
 ### Fixed
 
 - Fixed folder-qualified wikilinks: `[[Folder/Note]]`, `[[Folder/Note.md]]`, and any
   trailing part of a note's path now resolve, so two notes sharing a file name can be
   linked apart. Renaming a note keeps the form each link was written in.
+- Fixed `package-lock.json` still reporting 2.1.1 after the 2.1.2 release.
 
 ## [2.1.2] - 2026-07-22
 
@@ -56,3 +66,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Documented local note history and attachment handling in the README.
 - Refreshed the website copy to reflect live editing, attachments, and local note history.
+
+[Unreleased]: https://github.com/vardirhq/skald/compare/v2.1.2...HEAD
+[2.1.2]: https://github.com/vardirhq/skald/compare/v2.1.1...v2.1.2
+[2.1.1]: https://github.com/vardirhq/skald/compare/v2.1.0...v2.1.1
+[2.1.0]: https://github.com/vardirhq/skald/releases/tag/v2.1.0
