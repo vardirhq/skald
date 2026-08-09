@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { ABSENT, beats, decideMerge, nextRev, type FileState } from '../src-shared/sync/merge';
 import {
-  decodePayload,
-  encodePayload,
-  isSyncablePath,
+  decodeEvent,
+  encodeEvent,
+  isAttachmentPath,
+  isNotePath,
+  isSafeVaultPath,
+  MAX_ATTACHMENT_BYTES,
   PayloadError,
   type FileOp,
   type SyncPayload,
@@ -225,32 +228,45 @@ describe('decideMerge', () => {
 describe('payload paths', () => {
   it('accepts ordinary vault paths', () => {
     for (const path of ['Note.md', 'Projects/Jörmungandr.md', 'a/b/c/Deep note.md', 'Daily/2026-08-09.md']) {
-      expect(isSyncablePath(path)).toBe(true);
+      expect(isNotePath(path)).toBe(true);
+      expect(isAttachmentPath(path)).toBe(false);
     }
   });
 
-  it('refuses anything that could escape or hide', () => {
+  it('sorts attachments from notes by extension alone', () => {
+    for (const path of ['Attachments/diagram.png', 'a/b/report.pdf', 'Attachments/no-extension']) {
+      expect(isAttachmentPath(path)).toBe(true);
+      expect(isNotePath(path)).toBe(false);
+    }
+  });
+
+  it('refuses anything that could escape or hide, whatever its extension', () => {
     for (const path of [
       '../outside.md',
+      '../outside.png',
       '/etc/passwd.md',
+      '/etc/shadow',
       'C:/Windows/system.md',
       'a//b.md',
-      'a\\b.md',
+      'a\\b.png',
       '.skald/settings.md',
-      'folder/.hidden.md',
-      'note.txt',
+      '.skald/sync.json',
+      'folder/.hidden.png',
       '',
       'trailing .md ',
       'CON.md',
+      'com1.png',
       'a/../../b.md',
-      `bad${String.fromCharCode(0)}.md`,
+      `bad${String.fromCharCode(0)}.png`,
     ]) {
-      expect(isSyncablePath(path), path).toBe(false);
+      expect(isSafeVaultPath(path), path).toBe(false);
+      expect(isNotePath(path), path).toBe(false);
+      expect(isAttachmentPath(path), path).toBe(false);
     }
   });
 });
 
-describe('payload encoding', () => {
+describe('event encoding', () => {
   const payload: SyncPayload = {
     v: 1,
     kind: 'delta',
@@ -259,12 +275,45 @@ describe('payload encoding', () => {
     ops: [put(HASH_A, 1), del(2)],
   };
 
-  it('round-trips', () => {
-    expect(decodePayload(encodePayload(payload))).toEqual(payload);
+  it('round-trips a note event', () => {
+    const decoded = decodeEvent(encodeEvent(payload));
+    expect(decoded.payload).toEqual(payload);
+    expect(decoded.body).toHaveLength(0);
   });
 
-  function decodeRaw(value: unknown): SyncPayload {
-    return decodePayload(utf8Encode(JSON.stringify(value)));
+  it('round-trips an attachment with its bytes untouched', () => {
+    const bytes = new Uint8Array(512).map((_, i) => (i * 7) % 256);
+    const blob: SyncPayload = {
+      v: 1,
+      kind: 'blob',
+      device: 'desktop_a',
+      ts: 1786270000000,
+      ops: [{ op: 'putBin', path: 'Attachments/photo.png', rev: 1, ts: 1, hash: HASH_A, size: bytes.length }],
+    };
+    const decoded = decodeEvent(encodeEvent(blob, bytes));
+    expect(decoded.payload).toEqual(blob);
+    expect(Array.from(decoded.body)).toEqual(Array.from(bytes));
+  });
+
+  it('finds the header boundary even when the body starts with a newline', () => {
+    const bytes = new Uint8Array([0x0a, 0x0a, 0x00, 0xff]);
+    const blob: SyncPayload = {
+      v: 1,
+      kind: 'blob',
+      device: 'd',
+      ts: 1,
+      ops: [{ op: 'putBin', path: 'a.bin', rev: 1, ts: 1, hash: HASH_A, size: 4 }],
+    };
+    expect(Array.from(decodeEvent(encodeEvent(blob, bytes)).body)).toEqual([0x0a, 0x0a, 0x00, 0xff]);
+  });
+
+  function decodeRaw(value: unknown, body = new Uint8Array(0)): SyncPayload {
+    const header = utf8Encode(JSON.stringify(value));
+    const framed = new Uint8Array(header.length + 1 + body.length);
+    framed.set(header, 0);
+    framed[header.length] = 0x0a;
+    framed.set(body, header.length + 1);
+    return decodeEvent(framed).payload;
   }
 
   it('refuses a payload from a future version rather than guessing', () => {
@@ -292,8 +341,43 @@ describe('payload encoding', () => {
     );
   });
 
-  it('refuses bytes that are not a payload at all', () => {
-    expect(() => decodePayload(utf8Encode('not json'))).toThrow(PayloadError);
+  it('refuses a note sent as an attachment, and an attachment sent as a note', () => {
+    expect(() =>
+      decodeRaw({ ...payload, kind: 'blob', ops: [{ op: 'putBin', path: 'Note.md', rev: 1, ts: 1, hash: HASH_A, size: 0 }] })
+    ).toThrow(/Markdown file as an attachment/);
+    expect(() => decodeRaw({ ...payload, ops: [{ ...put(HASH_A, 1), path: 'photo.png' }] })).toThrow(
+      /not Markdown/
+    );
+  });
+
+  it('refuses a body that is not the length the header promised', () => {
+    const op = { op: 'putBin', path: 'a.png', rev: 1, ts: 1, hash: HASH_A, size: 10 };
+    expect(() => decodeRaw({ ...payload, kind: 'blob', ops: [op] }, new Uint8Array(9))).toThrow(
+      /not the length/
+    );
+  });
+
+  it('refuses an attachment larger than Skald will carry', () => {
+    const op = { op: 'putBin', path: 'a.png', rev: 1, ts: 1, hash: HASH_A, size: MAX_ATTACHMENT_BYTES + 1 };
+    expect(() => decodeRaw({ ...payload, kind: 'blob', ops: [op] })).toThrow(/implausible attachment size/);
+  });
+
+  it('keeps attachments out of shared events and bodies off note events', () => {
+    const op = { op: 'putBin', path: 'a.png', rev: 1, ts: 1, hash: HASH_A, size: 0 };
+    expect(() => decodeRaw({ ...payload, ops: [put(HASH_A, 1), op] })).toThrow(/its own event/);
+    expect(() => decodeRaw(payload, new Uint8Array([1]))).toThrow(/must not carry a body/);
+  });
+
+  it('refuses more than one attachment in a blob event', () => {
+    const op = { op: 'putBin', path: 'a.png', rev: 1, ts: 1, hash: HASH_A, size: 0 };
+    expect(() => decodeRaw({ ...payload, kind: 'blob', ops: [op, { ...op, path: 'b.png' }] })).toThrow(
+      /exactly one attachment/
+    );
+  });
+
+  it('refuses bytes that are not an event at all', () => {
+    expect(() => decodeEvent(utf8Encode('not json\n'))).toThrow(PayloadError);
+    expect(() => decodeEvent(utf8Encode('{"v":1}'))).toThrow(/no header/);
     expect(() => decodeRaw(null)).toThrow(PayloadError);
     expect(() => decodeRaw([1, 2, 3])).toThrow(PayloadError);
   });

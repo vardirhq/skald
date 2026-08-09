@@ -32,7 +32,17 @@ import {
 } from '../src-shared/gesh/crypto';
 import { utf8Encode } from '../src-shared/gesh/bytes';
 import { buildPairingUri, formatEnrollmentCode, parsePairingUri, withContentKey } from '../src-shared/gesh/pairing';
-import { decodePayload, encodePayload, PayloadError, type FileOp, type SyncPayload } from '../src-shared/sync/payload';
+import {
+  decodeEvent,
+  encodeEvent,
+  isAttachmentPath,
+  isNotePath,
+  MAX_ATTACHMENT_BYTES,
+  PayloadError,
+  type FileOp,
+  type PutBinOp,
+  type SyncEvent,
+} from '../src-shared/sync/payload';
 import { ABSENT, decideMerge, nextRev, type FileState } from '../src-shared/sync/merge';
 import {
   SYNC_APP_ID,
@@ -63,6 +73,8 @@ interface SyncStateFile {
   files: Record<string, FileState>;
   /** Paths deleted locally and not yet published, with the clock to publish them at. */
   tombstonedAtMs: Record<string, number>;
+  /** size+mtime of each attachment when it was last hashed, to avoid re-reading it. */
+  assetStamps: Record<string, { size: number; mtimeMs: number; hash: string }>;
 }
 
 export interface SyncEngineOptions {
@@ -84,6 +96,14 @@ export class SyncEngine {
   private passWarning: string | null = null;
   private retryAtMs: number | null = null;
   private pendingPaths = 0;
+  /** Attachments too large for the relay to accept, reported rather than hidden. */
+  private oversize: string[] = [];
+  /**
+   * Attachments this relay refused with a 413. Only an upload can discover
+   * these — its limit may be lower than the one Skald assumes — so they are
+   * remembered across passes rather than recomputed from the vault each time.
+   */
+  private relayRejected = new Set<string>();
 
   private running = false;
   private rerun = false;
@@ -123,6 +143,7 @@ export class SyncEngine {
         lastSyncMs: typeof parsed.lastSyncMs === 'number' ? parsed.lastSyncMs : null,
         files: (parsed.files ?? {}) as Record<string, FileState>,
         tombstonedAtMs: (parsed.tombstonedAtMs ?? {}) as Record<string, number>,
+        assetStamps: (parsed.assetStamps ?? {}) as SyncStateFile['assetStamps'],
       };
     } catch {
       return null;
@@ -140,6 +161,9 @@ export class SyncEngine {
         delete this.state.tombstonedAtMs[path];
         if (this.state.files[path]?.hash === ABSENT) delete this.state.files[path];
       }
+    }
+    for (const path of Object.keys(this.state.assetStamps)) {
+      if (!(path in this.state.files)) delete this.state.assetStamps[path];
     }
     try {
       mkdirSync(join(this.vault.path, '.skald'), { recursive: true });
@@ -169,6 +193,7 @@ export class SyncEngine {
       tracked: s ? Object.values(s.files).filter((f) => f.hash !== ABSENT).length : 0,
       secretsProtected: secretsProtected(),
       retryAtMs: this.retryAtMs,
+      oversize: this.oversize,
     };
   }
 
@@ -249,6 +274,7 @@ export class SyncEngine {
         lastSyncMs: null,
         files: {},
         tombstonedAtMs: {},
+        assetStamps: {},
       };
       this.lastError = null;
       this.phase = 'idle';
@@ -300,6 +326,7 @@ export class SyncEngine {
         lastSyncMs: null,
         files: {},
         tombstonedAtMs: {},
+        assetStamps: {},
       };
       this.lastError = null;
       this.phase = 'idle';
@@ -390,6 +417,8 @@ export class SyncEngine {
     this.lastError = null;
     this.retryAtMs = null;
     this.pendingPaths = 0;
+    this.oversize = [];
+    this.relayRejected.clear();
     this.emit();
     return this.status();
   }
@@ -523,9 +552,9 @@ export class SyncEngine {
           applied = meta.cursor;
           continue;
         }
-        let payload: SyncPayload;
+        let event: SyncEvent;
         try {
-          payload = decodePayload(await openEvent(key, blob));
+          event = decodeEvent(await openEvent(key, blob));
         } catch (err) {
           // One unreadable event must not wedge the feed forever: record it and
           // carry on, or this device never catches up.
@@ -537,7 +566,7 @@ export class SyncEngine {
           applied = meta.cursor;
           continue;
         }
-        await this.applyPayload(payload, meta.deviceId);
+        await this.applyEvent(event, meta.deviceId);
         applied = meta.cursor;
       }
 
@@ -557,33 +586,46 @@ export class SyncEngine {
     }
   }
 
-  private async applyPayload(payload: SyncPayload, sender: string): Promise<void> {
+  private async applyEvent(event: SyncEvent, sender: string): Promise<void> {
     const s = this.requireState();
-    for (const op of payload.ops) {
-      const localRaw = this.vault.syncRead(op.path);
-      const localHash = localRaw === null ? ABSENT : await sha256Hex(utf8Encode(localRaw));
+    for (const op of event.payload.ops) {
+      const isNote = isNotePath(op.path);
+      const localRaw = isNote ? this.vault.syncRead(op.path) : null;
+      const localHash = await this.localHashOf(op.path);
       const decision = decideMerge({
         incoming: op,
-        incomingWriter: payload.device || sender,
+        incomingWriter: event.payload.device || sender,
         known: s.files[op.path] ?? null,
         localHash,
         localDeviceId: s.deviceId,
       });
 
       if (decision.action === 'apply') {
-        if (decision.preserveLocal && localRaw !== null) {
+        if (decision.preserveLocal && isNote && localRaw !== null) {
           // The local edit is about to lose. Park it in the note's own history
           // so it is recoverable from the editor rather than gone.
           await this.vault.captureVersion(op.path, 'sync');
         }
         if (op.op === 'put') {
           if ((await sha256Hex(utf8Encode(op.content))) !== op.hash) {
-            console.error(`skald: content hash mismatch for ${op.path}, skipping`);
+            this.passWarning = `Skipped ${op.path}: it did not match the hash the sending device gave it`;
             continue;
           }
           await this.vault.syncWrite(op.path, op.content);
-        } else {
+        } else if (op.op === 'putBin') {
+          if ((await sha256Hex(event.body)) !== op.hash) {
+            this.passWarning = `Skipped ${op.path}: it did not match the hash the sending device gave it`;
+            continue;
+          }
+          await this.vault.syncWriteAsset(op.path, event.body);
+          // Force the next diff to re-stat this file rather than trust a stamp
+          // taken before the write.
+          delete s.assetStamps[op.path];
+        } else if (isNote) {
           await this.vault.syncDelete(op.path);
+        } else {
+          await this.vault.syncDeleteAsset(op.path);
+          delete s.assetStamps[op.path];
         }
       }
       if (decision.record) {
@@ -595,12 +637,46 @@ export class SyncEngine {
     this.writeState();
   }
 
+  /** Hash of whatever is on disk at that path right now, notes and attachments alike. */
+  private async localHashOf(path: string): Promise<string> {
+    if (isNotePath(path)) {
+      const raw = this.vault.syncRead(path);
+      return raw === null ? ABSENT : sha256Hex(utf8Encode(raw));
+    }
+    const bytes = await this.vault.syncReadAsset(path);
+    return bytes === null ? ABSENT : sha256Hex(bytes);
+  }
+
   // ---------- pushing ----------
 
-  private async localOps(full: boolean): Promise<FileOp[]> {
+  /**
+   * Hashing an attachment means reading all of it, so a file whose size and
+   * modification time are unchanged is taken at its recorded word. This is the
+   * difference between a vault with photographs in it syncing quietly and
+   * re-reading every one of them on each pass.
+   */
+  private async assetHash(path: string, size: number, mtimeMs: number): Promise<string | null> {
+    const s = this.requireState();
+    const stamp = s.assetStamps[path];
+    if (stamp && stamp.size === size && stamp.mtimeMs === mtimeMs) return stamp.hash;
+    const bytes = await this.vault.syncReadAsset(path);
+    if (!bytes) return null;
+    const hash = await sha256Hex(bytes);
+    s.assetStamps[path] = { size, mtimeMs, hash };
+    return hash;
+  }
+
+  /**
+   * What this device would publish right now. Notes and deletions batch into
+   * shared events; attachments get one event each, because their bytes are the
+   * event body rather than a field in it.
+   */
+  private async localOps(full: boolean): Promise<{ text: FileOp[]; assets: PutBinOp[]; oversize: string[] }> {
     const s = this.requireState();
     const now = Date.now();
-    const ops: FileOp[] = [];
+    const text: FileOp[] = [];
+    const assets: PutBinOp[] = [];
+    const oversize: string[] = [];
     const seen = new Set<string>();
 
     for (const file of this.vault.syncFiles()) {
@@ -608,7 +684,7 @@ export class SyncEngine {
       const hash = await sha256Hex(utf8Encode(file.raw));
       const known = s.files[file.path] ?? null;
       if (!full && known?.hash === hash) continue;
-      ops.push({
+      text.push({
         op: 'put',
         path: file.path,
         rev: known?.hash === hash ? known.rev : nextRev(known),
@@ -618,56 +694,104 @@ export class SyncEngine {
       });
     }
 
+    for (const asset of await this.vault.syncAssets()) {
+      if (!isAttachmentPath(asset.path)) continue;
+      // Counted as seen either way: a file too large to send has not been
+      // deleted, and must not be published as one.
+      seen.add(asset.path);
+      if (asset.size > MAX_ATTACHMENT_BYTES) {
+        oversize.push(asset.path);
+        continue;
+      }
+      const hash = await this.assetHash(asset.path, asset.size, asset.mtimeMs);
+      if (hash === null) continue;
+      const known = s.files[asset.path] ?? null;
+      if (!full && known?.hash === hash) continue;
+      assets.push({
+        op: 'putBin',
+        path: asset.path,
+        rev: known?.hash === hash ? known.rev : nextRev(known),
+        ts: now,
+        hash,
+        size: asset.size,
+      });
+    }
+
     // Anything we had agreed on that is no longer on disk has been deleted here.
     for (const [path, state] of Object.entries(s.files)) {
       if (seen.has(path) || state.hash === ABSENT) continue;
-      ops.push({ op: 'del', path, rev: nextRev(state), ts: now });
+      text.push({ op: 'del', path, rev: nextRev(state), ts: now });
     }
-    return ops;
+    return { text, assets, oversize };
   }
 
   private async push(full: boolean): Promise<void> {
     const s = this.requireState();
-    const ops = await this.localOps(full);
-    if (ops.length === 0) return;
+    const { text, assets, oversize } = await this.localOps(full);
+    this.oversize = this.composeOversize(oversize);
+    if (text.length === 0 && assets.length === 0) return;
 
     const secrets = this.secrets();
     const key = await contentKeyFromBase64Url(secrets.contentKey);
     const client = this.client();
 
-    for (const batch of batchOps(ops)) {
-      const payload: SyncPayload = {
-        v: 1,
-        kind: full ? 'snapshot' : 'delta',
-        device: s.deviceId,
-        ts: Date.now(),
-        ops: batch,
-      };
-      const sealed = await sealEvent(key, encodePayload(payload));
+    /** A snapshot republishes unchanged files at the revision they already hold.
+     *  Claiming authorship of those would change the tiebreak this device
+     *  applies without changing it anywhere else, and two devices would stop
+     *  agreeing on who wins. */
+    const record = (path: string, hash: string, rev: number): void => {
+      const known = s.files[path];
+      const unchanged = known?.hash === hash && known.rev === rev;
+      s.files[path] = { hash, rev, writer: unchanged ? known.writer : s.deviceId };
+      delete s.tombstonedAtMs[path];
+    };
+
+    for (const batch of batchOps(text)) {
+      const sealed = await sealEvent(
+        key,
+        encodeEvent({ v: 1, kind: full ? 'snapshot' : 'delta', device: s.deviceId, ts: Date.now(), ops: batch })
+      );
       // A 409 means this event id already landed, which on a retry is success.
       await client.putEvent(this.ref(), s.deviceId, newEventId(), sealed, secrets.deviceToken);
 
       // Only record what actually shipped, so a failure part-way through a large
       // vault leaves the rest to be retried rather than silently forgotten.
       for (const op of batch) {
-        if (op.op === 'put') {
-          // A snapshot republishes unchanged notes at the revision they already
-          // hold. Claiming authorship of those would change the tiebreak this
-          // device applies without changing it anywhere else, and two devices
-          // would stop agreeing on who wins.
-          const known = s.files[op.path];
-          const unchanged = known?.hash === op.hash && known.rev === op.rev;
-          s.files[op.path] = {
-            hash: op.hash,
-            rev: op.rev,
-            writer: unchanged ? known.writer : s.deviceId,
-          };
-          delete s.tombstonedAtMs[op.path];
-        } else {
+        if (op.op === 'del') {
           s.files[op.path] = { hash: ABSENT, rev: op.rev, writer: s.deviceId };
           s.tombstonedAtMs[op.path] = Date.now();
+        } else if (op.op === 'put') {
+          record(op.path, op.hash, op.rev);
         }
       }
+      this.writeState();
+    }
+
+    for (const op of assets) {
+      const bytes = await this.vault.syncReadAsset(op.path);
+      // Deleted or rewritten since it was listed. Either way the next pass sees
+      // the truth; publishing this one now would publish a lie.
+      if (!bytes || bytes.length !== op.size) continue;
+      if ((await sha256Hex(bytes)) !== op.hash) continue;
+
+      const sealed = await sealEvent(
+        key,
+        encodeEvent({ v: 1, kind: 'blob', device: s.deviceId, ts: Date.now(), ops: [op] }, bytes)
+      );
+      try {
+        await client.putEvent(this.ref(), s.deviceId, newEventId(), sealed, secrets.deviceToken);
+      } catch (err) {
+        if (err instanceof GeshError && err.status === 413) {
+          // This relay's limit is lower than the one Skald assumes. Report the
+          // file rather than failing the whole pass over it.
+          this.relayRejected.add(op.path);
+          this.oversize = this.composeOversize(this.oversize);
+          continue;
+        }
+        throw err;
+      }
+      this.relayRejected.delete(op.path);
+      record(op.path, op.hash, op.rev);
       this.writeState();
     }
   }
@@ -677,13 +801,20 @@ export class SyncEngine {
     return this.syncNow({ snapshot: true });
   }
 
+  /** Files Skald refused to send, plus files this relay refused to take. */
+  private composeOversize(local: string[]): string[] {
+    return [...new Set([...local, ...this.relayRejected])].sort();
+  }
+
   private async refreshPending(): Promise<void> {
     if (!this.state) {
       this.pendingPaths = 0;
       return;
     }
     try {
-      this.pendingPaths = (await this.localOps(false)).length;
+      const { text, assets, oversize } = await this.localOps(false);
+      this.pendingPaths = text.length + assets.length;
+      this.oversize = this.composeOversize(oversize);
     } catch {
       this.pendingPaths = 0;
     }

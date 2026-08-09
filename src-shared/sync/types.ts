@@ -17,14 +17,16 @@ export interface SyncStatus {
   phase: SyncPhase;
   lastSyncMs: number | null;
   lastError: string | null;
-  /** Notes changed locally since the last successful push. */
+  /** Files changed locally since the last successful push. */
   pending: number;
-  /** Notes this vault has agreed on with the root. */
+  /** Files — notes and attachments — this vault has agreed on with the root. */
   tracked: number;
   /** Credentials are held in the OS keystore rather than a plain file. */
   secretsProtected: boolean;
   /** When rate limited, the moment it is worth trying again. */
   retryAtMs: number | null;
+  /** Attachments the relay will not accept, because they are too large. */
+  oversize: string[];
 }
 
 export interface SyncDeviceInfo {

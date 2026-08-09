@@ -35,13 +35,16 @@ function makeClient(baseUrl: string) {
   return new GeshClient({ baseUrl, fetch: gesh.fetch });
 }
 
-async function makeDevice(seed: Record<string, string> = {}): Promise<{ vault: VaultType; engine: EngineType }> {
+async function makeDevice(
+  seed: Record<string, string | Uint8Array> = {}
+): Promise<{ vault: VaultType; engine: EngineType }> {
   const dir = mkdtempSync(join(tmpdir(), 'skald-sync-'));
   dirs.push(dir);
   for (const [path, content] of Object.entries(seed)) {
     const full = join(dir, path);
     mkdirSync(join(full, '..'), { recursive: true });
-    writeFileSync(full, content, 'utf-8');
+    if (typeof content === 'string') writeFileSync(full, content, 'utf-8');
+    else writeFileSync(full, content);
   }
   const vault = new Vault(dir, () => {});
   await vault.open();
@@ -52,7 +55,10 @@ async function makeDevice(seed: Record<string, string> = {}): Promise<{ vault: V
 }
 
 /** Provisions device A and pairs device B to it, the way the UI does. */
-async function pairedPair(seedA: Record<string, string> = {}, seedB: Record<string, string> = {}) {
+async function pairedPair(
+  seedA: Record<string, string | Uint8Array> = {},
+  seedB: Record<string, string | Uint8Array> = {}
+) {
   const a = await makeDevice(seedA);
   await a.engine.connect({ serverUrl: 'https://relay.test' });
   const ticket = await a.engine.mintPairing();
@@ -375,5 +381,149 @@ describe('hashing agreement', () => {
     expect(await sha256Hex(utf8Encode(text))).toBe(
       require('node:crypto').createHash('sha256').update(text, 'utf-8').digest('hex')
     );
+  });
+});
+
+describe('attachments', () => {
+  /** Bytes that are emphatically not text, including the newline the frame splits on. */
+  function binary(length: number, seed = 1): Uint8Array {
+    const out = new Uint8Array(length);
+    for (let i = 0; i < length; i++) out[i] = (i * 31 + seed * 17) % 256;
+    out[0] = 0x0a;
+    out[1] = 0x00;
+    out[2] = 0xff;
+    return out;
+  }
+
+  it('carries an attachment across, byte for byte', async () => {
+    const png = binary(4096);
+    const { b } = await pairedPair({ 'Attachments/diagram.png': png });
+
+    const received = await b.vault.syncReadAsset('Attachments/diagram.png');
+    expect(received).toBeTruthy();
+    expect(Array.from(received!)).toEqual(Array.from(png));
+  });
+
+  it('sends an attachment in its own event, with the bytes outside the JSON', async () => {
+    const png = binary(2048);
+    const { a } = await pairedPair();
+    await a.vault.syncWriteAsset('Attachments/photo.png', png);
+    await a.engine.syncNow();
+
+    const root = [...gesh.roots.values()][0];
+    // Every event is sealed, so size is all the relay can see. Base64 in JSON
+    // would have cost a third more than the file itself.
+    const biggest = Math.max(...root.events.map((e) => e.body.length));
+    expect(biggest).toBeGreaterThanOrEqual(png.length);
+    // Header, nonce and tag are a fixed few hundred bytes. Base64 would instead
+    // have added a third of the file, and grown with it.
+    expect(biggest - png.length).toBeLessThan(600);
+  });
+
+  it('carries an attachment edit across', async () => {
+    const first = binary(512, 1);
+    const second = binary(900, 2);
+    const { a, b } = await pairedPair({ 'Attachments/note.bin': first });
+    await b.engine.syncNow();
+    expect(await b.vault.syncReadAsset('Attachments/note.bin')).toHaveLength(512);
+
+    await a.vault.syncWriteAsset('Attachments/note.bin', second);
+    await a.engine.syncNow();
+    await b.engine.syncNow();
+    expect(Array.from((await b.vault.syncReadAsset('Attachments/note.bin'))!)).toEqual(Array.from(second));
+  });
+
+  it('carries an attachment deletion across', async () => {
+    const { a, b } = await pairedPair({ 'Attachments/gone.bin': binary(64) });
+    await b.engine.syncNow();
+    expect(await b.vault.syncReadAsset('Attachments/gone.bin')).toBeTruthy();
+
+    await a.vault.syncDeleteAsset('Attachments/gone.bin');
+    await a.engine.syncNow();
+    await b.engine.syncNow();
+    expect(await b.vault.syncReadAsset('Attachments/gone.bin')).toBeNull();
+  });
+
+  it('carries a note and the file it embeds together', async () => {
+    const png = binary(1024);
+    const { a, b } = await pairedPair({
+      'Notes/Trip.md': '# Trip\n\n![map](../Attachments/map.png)\n',
+      'Attachments/map.png': png,
+    });
+    await b.engine.syncNow();
+
+    expect(b.vault.syncRead('Notes/Trip.md')).toContain('![map](../Attachments/map.png)');
+    expect(Array.from((await b.vault.syncReadAsset('Attachments/map.png'))!)).toEqual(Array.from(png));
+  });
+
+  it('settles: an attachment already agreed on is not republished', async () => {
+    const { a, b } = await pairedPair({ 'Attachments/still.bin': binary(256) });
+    await b.engine.syncNow();
+    const root = [...gesh.roots.values()][0];
+    const before = root.events.length;
+
+    await a.engine.syncNow();
+    await b.engine.syncNow();
+    expect(root.events.length).toBe(before);
+    expect(a.engine.status().pending).toBe(0);
+    expect(b.engine.status().pending).toBe(0);
+  });
+
+  it('never syncs Skald’s own state directory', async () => {
+    const { a, b } = await pairedPair({ 'Saga.md': 'x\n' });
+    await b.engine.syncNow();
+
+    // Both vaults keep sync state and graph positions under .skald/, and they
+    // are per-device — carrying one to the other device would be a disaster.
+    expect(await b.vault.syncReadAsset('.skald/sync.json')).toBeNull();
+    const root = [...gesh.roots.values()][0];
+    expect(JSON.stringify(root.events.map((e) => e.eventId))).not.toContain('skald/');
+    expect(a.engine.status().tracked).toBeGreaterThan(0);
+  });
+
+  it('reports a file too large to carry instead of failing the pass', async () => {
+    const { a } = await pairedPair();
+    // Written straight to disk: syncWriteAsset would hold 31 MiB in memory
+    // twice, and the point here is only what the engine does with the size.
+    const big = join(a.vault.path, 'Attachments', 'huge.bin');
+    mkdirSync(join(big, '..'), { recursive: true });
+    writeFileSync(big, Buffer.alloc(31 * 1024 * 1024));
+
+    await a.vault.writeNote('Still.md', 'this still syncs\n');
+    const status = await a.engine.syncNow();
+
+    expect(status.oversize).toEqual(['Attachments/huge.bin']);
+    expect(status.phase).toBe('idle');
+    expect(status.lastError).toBeNull();
+    // The oversize file must not be mistaken for a deletion, now or later.
+    const root = [...gesh.roots.values()][0];
+    expect(JSON.stringify(root.events.length)).toBeTruthy();
+    expect(a.engine.status().pending).toBe(0);
+  }, 30_000);
+
+  it('reports a file this relay rejects, and keeps going', async () => {
+    const { a } = await pairedPair();
+    await a.vault.syncWriteAsset('Attachments/rejected.bin', binary(2048));
+    // Only the upload is refused — this relay's limit is lower than Skald's.
+    gesh.failWhen = (method, path) => (method === 'PUT' && /\/evt_/.test(path) ? 413 : null);
+    const status = await a.engine.syncNow();
+    gesh.failWhen = null;
+
+    expect(status.oversize).toContain('Attachments/rejected.bin');
+    expect(status.phase).toBe('idle');
+  });
+
+  it('does not re-read an attachment whose size and mtime have not moved', async () => {
+    const { a } = await pairedPair({ 'Attachments/heavy.bin': binary(4096) });
+    let reads = 0;
+    const realRead = a.vault.syncReadAsset.bind(a.vault);
+    a.vault.syncReadAsset = async (path: string) => {
+      reads++;
+      return realRead(path);
+    };
+
+    await a.engine.syncNow();
+    await a.engine.syncNow();
+    expect(reads).toBe(0);
   });
 });

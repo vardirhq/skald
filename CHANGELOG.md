@@ -15,6 +15,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   with AES-256-GCM on the device; the relay stores opaque blobs it cannot read and erases
   them once every device has collected them. The content key never reaches the server —
   it travels to a new device only in the fragment of the pairing link.
+- Added attachment sync. Images, PDFs and every other non-Markdown file in the vault
+  travel with the notes that reference them, as raw bytes in their own event rather than
+  base64 inside one — a file costs its own size to sync, not a third more. Attachments
+  are written by atomic rename, so a half-written file is never visible. A file too large
+  for the relay is named in Settings → Sync instead of quietly failing the pass, and a
+  file whose size and modification time have not moved is never re-read.
 - Added conflict resolution that converges on the same winner on every device, and never
   discards the losing text: it is written into that note's history first, and appears in
   the editor's history list as "Replaced by sync".

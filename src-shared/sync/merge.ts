@@ -68,7 +68,9 @@ export function decideMerge({
   localHash,
   localDeviceId,
 }: MergeInput): MergeResult {
-  const incomingHash = incoming.op === 'put' ? incoming.hash : ABSENT;
+  // A note and an attachment differ only in how their bytes travelled; the
+  // clock, the tiebreak and the meaning of absence are identical.
+  const incomingHash = incoming.op === 'del' ? ABSENT : incoming.hash;
   const incomingState: FileState = { hash: incomingHash, rev: incoming.rev, writer: incomingWriter };
   const knownHash = known?.hash ?? ABSENT;
 

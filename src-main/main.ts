@@ -66,11 +66,16 @@ async function openVault(path: string, seedIfEmpty = false): Promise<unknown> {
   sync?.dispose();
   sync = null;
   await vault?.close();
-  vault = new Vault(path, (snapshot) => {
-    mainWindow?.webContents.send('vault:changed', snapshot);
-    // A local edit is a reason to publish, but only once the burst settles.
-    sync?.scheduleSync();
-  });
+  vault = new Vault(
+    path,
+    (snapshot) => {
+      mainWindow?.webContents.send('vault:changed', snapshot);
+      // A local edit is a reason to publish, but only once the burst settles.
+      sync?.scheduleSync();
+    },
+    // Attachments are not indexed, so they never reach the snapshot callback.
+    () => sync?.scheduleSync()
+  );
   await vault.open();
   if (seedIfEmpty && vault.snapshot().notes.length === 0) {
     await vault.seed();

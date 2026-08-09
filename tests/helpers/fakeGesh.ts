@@ -41,6 +41,8 @@ export interface FakeGesh {
   roots: Map<string, Root>;
   /** Set to a status to make the next request fail with it. */
   failNextWith: number | null;
+  /** Set to fail only the requests it matches, for as long as it is set. */
+  failWhen: ((method: string, path: string) => number | null) | null;
   requestLog: string[];
 }
 
@@ -105,6 +107,7 @@ export function createFakeGesh(options: { publicUrl?: string | null } = {}): Fak
   const state: FakeGesh = {
     roots: new Map(),
     failNextWith: null,
+    failWhen: null,
     requestLog: [],
     fetch: async () => new Response(null, { status: 500 }),
   };
@@ -117,8 +120,9 @@ export function createFakeGesh(options: { publicUrl?: string | null } = {}): Fak
     const path = url.pathname;
     state.requestLog.push(`${method} ${path}`);
 
-    if (state.failNextWith !== null) {
-      const status = state.failNextWith;
+    const matched = state.failWhen?.(method, path) ?? null;
+    if (state.failNextWith !== null || matched !== null) {
+      const status = matched ?? (state.failNextWith as number);
       state.failNextWith = null;
       if (status === 429) return err(429, 'slow down', { 'retry-after': '2' });
       if (status === 413) return new Response('payload too large', { status: 413 });

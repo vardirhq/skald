@@ -32,7 +32,7 @@ src-main/              Electron only
 
 Everything under `src-shared/` is written against web platform globals — `fetch`,
 WebCrypto, `TextEncoder` — and imports nothing from Node or Electron. A mobile client
-should be able to take those five plus two files unchanged and supply its own storage.
+should be able to take all eight of those files unchanged and supply its own storage.
 
 ## The two halves of pairing
 
@@ -62,7 +62,16 @@ same root, and each is its own device.
 
 ## What an event contains
 
-One event is a batch of whole-file operations, JSON, sealed with a fresh 96-bit nonce:
+Every event is a frame, sealed with a fresh 96-bit nonce:
+
+```text
+<JSON header> \n <raw body bytes>
+```
+
+`JSON.stringify` never emits a literal newline, so the first `0x0A` is always the
+boundary. Notes travel in the header; an attachment travels as raw bytes in the body.
+
+A `delta` (or `snapshot`) is header-only and batches whole-file operations:
 
 ```jsonc
 {
@@ -78,6 +87,27 @@ One event is a batch of whole-file operations, JSON, sealed with a fresh 96-bit 
 }
 ```
 
+A `blob` carries exactly one attachment, and its bytes are the body rather than a
+field:
+
+```jsonc
+{
+  "v": 1,
+  "kind": "blob",
+  "device": "desktop_k3n8vq2wla",
+  "ts": 1786270000000,
+  "ops": [
+    { "op": "putBin", "path": "Attachments/map.png", "rev": 2, "ts": 1786270000000,
+      "hash": "<sha256 of the bytes>", "size": 1048576 }
+  ]
+}
+```
+
+Base64 inside the JSON would have been simpler and cost a third of every file
+forever. The body is checked against `size` before it is read and against `hash`
+before it is written, and a `blob` may not carry more than one attachment — nor a
+`delta` any attachment at all.
+
 `rev` is a per-path logical clock, not a wall clock: the relay's `created_at_ms` is the
 *server's* view and is never used for ordering. Pushes are split into batches well under
 the relay's body limit; a note too large to fit is left in its own event so a `413` names
@@ -87,9 +117,21 @@ Every decrypted payload is fully re-validated before it is used — `path` in pa
 which is about to become a filename. Anything that could escape the vault, hide under
 `.skald/`, or land on a reserved Windows name is refused.
 
-Attachments and other non-Markdown files are **not** synced yet. The op shape has room for
-them, and the size limit is the reason to do it as a separate kind of event rather than by
-inlining bytes into these.
+**What counts as an attachment.** Every file in the vault that is not Markdown and is not
+under a dot-directory — so `.skald/` never travels, which matters because sync state, graph
+positions and note history are per-device. Notes are indexed in memory; attachments are
+not, so publishing them means walking the tree. Hashing one means reading all of it, so a
+file whose size and modification time are unchanged is taken at its recorded word.
+
+**One event per attachment, and no chunking.** A file larger than 30 MiB is refused before
+it can earn a `413`, and a relay whose own limit is lower answers `413` for a file Skald
+thought was fine. Both end up in the same place: named in `oversize` on the sync status and
+shown in Settings, while everything else continues to sync. Chunking across events is the
+obvious next step and deliberately not taken yet — reassembly has to survive the relay
+erasing an earlier part once it is acknowledged, which means staging partial files on disk.
+
+Attachments are written the way the relay writes its own blobs: staged under `.skald/` and
+published by rename, so no reader ever sees a half-written file.
 
 ## Conflict resolution
 
@@ -150,10 +192,12 @@ To join an existing root, a new Skald client needs:
 2. **Somewhere to keep three secrets** — device token, content key, and (only on the device
    that provisioned the root) the root token. Keychain on iOS, Keystore on Android.
    Not app storage, and never the vault.
-3. **A vault adapter.** The engine only ever asks the vault for five things: enumerate notes
-   with their raw content, read one, write one, delete one, and force a history snapshot.
-   `Vault.syncFiles / syncRead / syncWrite / syncDelete / captureVersion` are that whole
-   surface; anything providing them can drive the same engine.
+3. **A vault adapter.** The engine only ever asks the vault for nine things: enumerate
+   notes and read, write or delete one; enumerate attachments and read, write or delete
+   one; and force a history snapshot before a note loses a conflict.
+   `Vault.syncFiles / syncRead / syncWrite / syncDelete / syncAssets / syncReadAsset /
+   syncWriteAsset / syncDeleteAsset / captureVersion` are that whole surface; anything
+   providing them can drive the same engine.
 4. **Somewhere to persist sync state** — the cursor, the device id, and the per-path agreed
    state. On desktop that is `.skald/sync.json` inside the vault, which is the right place
    precisely because it belongs to that vault and not to the installation.

@@ -43,8 +43,9 @@ export function SyncPane() {
       <h1 className="settings__title">Sync</h1>
       <p className="settings__lede">
         Skald syncs through <span className="mono">GESH</span>, a relay that holds encrypted blobs just long
-        enough to hand them to your other devices. Notes are encrypted on this machine before they leave it, and
-        the key never reaches the server — so the relay can pass your vault along, and cannot read it.
+        enough to hand them to your other devices. Notes and their attachments are encrypted on this machine
+        before they leave it, and the key never reaches the server — so the relay can pass your vault along, and
+        cannot read it.
       </p>
 
       {error && <div className="sync-banner sync-banner--bad">{error}</div>}
@@ -214,8 +215,9 @@ function ConnectedPanes({
         <div className="settings__row__l">
           <h3>Sync now</h3>
           <p>
-            Collect anything waiting, then publish this vault's changes. A full republish is what a device that
-            has been away for weeks needs, since the relay does not keep a log to replay.
+            Collect anything waiting, then publish this vault's changes — notes and attachments alike. A full
+            republish is what a device that has been away for weeks needs, since the relay does not keep a log
+            to replay.
           </p>
         </div>
         <div className="settings__row__r">
@@ -326,9 +328,18 @@ function Status({ status }: { status: SyncStatus }) {
         </span>
       </div>
       {status.lastError && <div className="sync-status__error">{status.lastError}</div>}
+      {status.oversize.length > 0 && (
+        <div className="sync-status__warn">
+          {status.oversize.length === 1
+            ? '1 attachment is too large for the relay to carry:'
+            : `${status.oversize.length} attachments are too large for the relay to carry:`}{' '}
+          <span className="mono">{status.oversize.slice(0, 4).join(', ')}</span>
+          {status.oversize.length > 4 && ` and ${status.oversize.length - 4} more`}. Everything else still syncs.
+        </div>
+      )}
       <div className="sync-status__facts">
         <span>{status.serverUrl}</span>
-        <span>{status.tracked} notes tracked</span>
+        <span>{status.tracked} files tracked</span>
         <span className="mono">{status.deviceId}</span>
         {status.isRoot && <span className="sync-tag">this device holds the root</span>}
       </div>

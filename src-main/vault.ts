@@ -26,6 +26,7 @@ import {
   safeFileName,
 } from '../src-shared/notes';
 import { layoutGraph } from './layout';
+import { isAttachmentPath } from '../src-shared/sync/payload';
 import {
   attachmentKind,
   attachmentMarkdown,
@@ -88,9 +89,19 @@ export class Vault {
   private selfWrites = new Map<string, number>();
   private broadcast: () => void;
   private broadcastTimer: NodeJS.Timeout | null = null;
+  private onAssetChange: () => void;
 
-  constructor(vaultPath: string, onChange: (snapshot: VaultSnapshot) => void) {
+  constructor(
+    vaultPath: string,
+    onChange: (snapshot: VaultSnapshot) => void,
+    /**
+     * Called when a non-Markdown file changes. Attachments are not indexed, so
+     * they never move the snapshot — but sync still needs to hear about them.
+     */
+    onAssetChange: () => void = () => {}
+  ) {
     this.path = resolve(vaultPath);
+    this.onAssetChange = onAssetChange;
     this.broadcast = () => {
       if (this.broadcastTimer) clearTimeout(this.broadcastTimer);
       this.broadcastTimer = setTimeout(() => onChange(this.snapshot()), 120);
@@ -297,7 +308,12 @@ export class Vault {
       this.broadcast();
       return;
     }
-    if (!/\.md$/i.test(path)) return;
+    if (!/\.md$/i.test(path)) {
+      // An attachment. Nothing to index, but sync publishes these too — unless
+      // this is the write sync itself just made.
+      if ((this.selfWrites.get(path) ?? 0) <= Date.now() - 2500) this.onAssetChange();
+      return;
+    }
     if (kind === 'unlink') {
       this.notes.delete(path);
       this.broadcast();
@@ -1007,6 +1023,94 @@ export class Vault {
   /** Every note the engine may publish, as raw file content. */
   syncFiles(): { path: string; raw: string }[] {
     return [...this.notes.values()].map((rec) => ({ path: rec.path, raw: rec.raw }));
+  }
+
+  /**
+   * Every non-Markdown file in the vault, with the stat the engine uses to skip
+   * re-hashing something that has not moved. Notes are indexed in memory;
+   * attachments are not, so this walks the tree.
+   */
+  async syncAssets(): Promise<{ path: string; size: number; mtimeMs: number }[]> {
+    const out: { path: string; size: number; mtimeMs: number }[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+        } else if (entry.isFile() && !/\.md$/i.test(entry.name)) {
+          try {
+            const info = await stat(full);
+            out.push({ path: this.rel(full), size: info.size, mtimeMs: info.mtimeMs });
+          } catch {
+            // A file that vanished mid-walk is simply not there to publish.
+          }
+        }
+      }
+    };
+    await walk(this.path);
+    return out;
+  }
+
+  /** Bytes of one attachment, or null when it is not there. */
+  async syncReadAsset(path: string): Promise<Uint8Array | null> {
+    // Belt and braces: events are path-validated on decode, but these doors are
+    // the ones that touch the filesystem, and `.skald/` must stay unreachable
+    // through them however they are called.
+    if (!isAttachmentPath(path)) return null;
+    try {
+      return new Uint8Array(await readFile(this.full(path)));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Applies an attachment received from another device. Staged under a
+   * temporary name and published by rename, so a reader never sees a
+   * half-written file — the same rule the relay applies to its own blobs.
+   */
+  async syncWriteAsset(path: string, bytes: Uint8Array): Promise<void> {
+    if (!isAttachmentPath(path)) throw new Error(`Not a syncable attachment: ${path}`);
+    const full = this.full(path);
+    await mkdir(dirname(full), { recursive: true });
+    // Stage inside .skald/ rather than beside the target: it is the same
+    // filesystem so the rename is atomic, and a partial file there is invisible
+    // to the watcher, the scanner, and the next attachment walk.
+    const stagingDir = join(this.path, SKALD_DIR, 'staging');
+    await mkdir(stagingDir, { recursive: true });
+    const staging = join(stagingDir, `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    this.markSelfWrite(path);
+    await writeFile(staging, bytes);
+    await rename(staging, full);
+    const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    if (folder) this.folders.add(folder);
+    this.recordActivity({
+      kind: 'note',
+      verb: 'received',
+      title: basename(path),
+      ref: folder || 'vault',
+      ts: Date.now(),
+    });
+    this.broadcast();
+  }
+
+  /** Applies an attachment deletion received from another device. */
+  async syncDeleteAsset(path: string): Promise<void> {
+    if (!isAttachmentPath(path)) throw new Error(`Not a syncable attachment: ${path}`);
+    this.markSelfWrite(path);
+    try {
+      await rm(this.full(path));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    this.broadcast();
   }
 
   /** Raw content of one note, or null when it is not in the vault. */
