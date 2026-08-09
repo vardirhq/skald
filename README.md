@@ -100,7 +100,9 @@ To publish a release:
    opens a `release/vX.Y.Z` PR. Doing it locally with `npm run release:prepare` works the
    same way.
 2. Merge that PR.
-3. Push the tag it names:
+3. Run the **Release** workflow (Actions → Release) and leave the tag empty. It releases
+   whatever version `main` is on, creating the tag once the checks pass. Pushing the tag
+   by hand does the same thing:
 
    ```bash
    git checkout main && git pull
@@ -108,10 +110,10 @@ To publish a release:
    git push origin vX.Y.Z
    ```
 
-The tag starts the **Release** workflow, which:
+Either way the **Release** workflow:
 
 - re-verifies that the tag, `package.json`, `package-lock.json`, and the changelog section
-  all agree, before building anything;
+  all agree, before building anything or creating the tag;
 - refuses a tag that is not an ancestor of `main`, and refuses to overwrite a release that
   is already published (both overridable from a manual run);
 - typechecks, tests, and builds, then packages Linux x64 AppImage and `.deb` artifacts;
@@ -123,6 +125,11 @@ The tag starts the **Release** workflow, which:
 
 Tags matching `vX.Y.Z-rc.1` and friends are published as prereleases and do not become the
 latest release.
+
+**Prepare release** needs *Settings → Actions → General → Workflow permissions → Allow
+GitHub Actions to create and approve pull requests*. Without it the workflow still bumps
+the version, validates it, and pushes the `release/vX.Y.Z` branch — it just prints a link
+to open the PR yourself instead of opening it.
 
 ## Keyboard
 
