@@ -61,22 +61,11 @@ npm run electron:pack  # build distributables
 
 CI runs on pull requests and pushes to `main`:
 
+- `npm run release:check` — version and changelog consistency
 - `npm ci`
 - `npm run typecheck`
 - `npm test`
 - `npm run build`
-
-Releases are tag-driven. To publish a release, move the changelog entries out of
-`[Unreleased]`, bump `package.json` and `package-lock.json`, merge that change, then push
-a matching tag:
-
-```bash
-git tag v2.1.0
-git push origin v2.1.0
-```
-
-The release workflow checks that the tag, package version, and changelog section match,
-then packages Linux x64 AppImage/deb artifacts and attaches them to a GitHub Release.
 
 Repo layout:
 
@@ -84,8 +73,56 @@ Repo layout:
   backlinks, graph layout), IPC, window.
 - `src/` — renderer: React + plain CSS design tokens (no CSS framework).
 - `src-shared/` — pure logic shared by both: frontmatter, tasks, wikilinks, fuzzy search.
+- `tools/` — release tooling and the screenshot driver.
 - `tests/` — vitest suites, including an end-to-end suite driving a real temp vault.
 - `archive/skald-v1/` — the previous implementation, kept for reference only.
+
+## Releasing
+
+The version is written down in three places — `package.json`, `package-lock.json`, and
+`CHANGELOG.md` — and `tools/release.mjs` owns all three so they can never drift apart.
+
+```bash
+npm run release:check                 # are the three files consistent?
+npm run release:prepare -- minor      # cut the next version (major|minor|patch|X.Y.Z)
+npm run release:notes                 # print the changelog section for this version
+```
+
+`release:prepare` bumps both version fields in `package-lock.json`, dates the
+`[Unreleased]` changelog section, opens a fresh empty one, and regenerates the changelog
+compare links. It refuses to run if `[Unreleased]` is empty or the new version does not
+come after the last released one.
+
+To publish a release:
+
+1. Run the **Prepare release** workflow (Actions → Prepare release) and pick a bump. It
+   runs `release:prepare`, validates the result with typecheck, tests, and a build, and
+   opens a `release/vX.Y.Z` PR. Doing it locally with `npm run release:prepare` works the
+   same way.
+2. Merge that PR.
+3. Push the tag it names:
+
+   ```bash
+   git checkout main && git pull
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+The tag starts the **Release** workflow, which:
+
+- re-verifies that the tag, `package.json`, `package-lock.json`, and the changelog section
+  all agree, before building anything;
+- refuses a tag that is not an ancestor of `main`, and refuses to overwrite a release that
+  is already published (both overridable from a manual run);
+- typechecks, tests, and builds, then packages Linux x64 AppImage and `.deb` artifacts;
+- attaches a [build provenance attestation](https://github.com/vardirhq/skald/attestations)
+  to each artifact, verifiable with
+  `gh attestation verify <file> --repo vardirhq/skald`;
+- publishes the GitHub Release with the changelog section, install instructions, and a
+  `SHA256SUMS.txt`, failing if any expected artifact is missing.
+
+Tags matching `vX.Y.Z-rc.1` and friends are published as prereleases and do not become the
+latest release.
 
 ## Keyboard
 

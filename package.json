@@ -15,7 +15,10 @@
     "electron:pack": "npm run build && electron-builder",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "test": "vitest run",
-    "screenshots": "node tools/screenshots.mjs"
+    "screenshots": "node tools/screenshots.mjs",
+    "release:check": "node tools/release.mjs check",
+    "release:prepare": "node tools/release.mjs prepare",
+    "release:notes": "node tools/release.mjs notes"
   },
   "keywords": [
     "knowledge-base",
