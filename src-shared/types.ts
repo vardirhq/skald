@@ -188,7 +188,7 @@ export interface AttachmentImportResult {
   markdown: string;
 }
 
-export type NoteHistoryReason = 'edit' | 'external' | 'rename' | 'delete' | 'restore';
+export type NoteHistoryReason = 'edit' | 'external' | 'rename' | 'delete' | 'restore' | 'sync';
 
 export interface NoteHistoryEntry {
   /** Snapshot filename; opaque outside the main process. */

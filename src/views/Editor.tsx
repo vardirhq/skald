@@ -710,6 +710,7 @@ function historyReasonLabel(reason: NoteHistoryEntry['reason']): string {
     rename: 'Before rename',
     delete: 'Before deletion',
     restore: 'Before restore',
+    sync: 'Replaced by sync',
   }[reason];
 }
 

@@ -6,8 +6,9 @@ import { Logo, type LogoVariant } from '../ui/logo';
 import { api } from '../api';
 import { useStore } from '../store';
 import { allFolderPaths } from '../chrome/Sidebar';
+import { SyncPane } from './SyncPane';
 
-type Pane = 'appearance' | 'themes' | 'editor' | 'schemas' | 'vault' | 'shortcuts';
+type Pane = 'appearance' | 'themes' | 'editor' | 'schemas' | 'vault' | 'sync' | 'shortcuts';
 
 const SCHEMA_DESC: Record<string, string> = {
   Note: 'Catch-all note.',
@@ -34,6 +35,7 @@ export function SettingsView({ snapshot }: { snapshot: VaultSnapshot }) {
         {pane === 'editor' && <EditorPane s={s} set={set} snapshot={snapshot} />}
         {pane === 'schemas' && <SchemasPane snapshot={snapshot} />}
         {pane === 'vault' && <VaultPane snapshot={snapshot} s={s} set={set} />}
+        {pane === 'sync' && <SyncPane />}
         {pane === 'shortcuts' && <ShortcutsPane />}
       </div>
     </div>
@@ -50,6 +52,7 @@ function SettingsNav({ pane, setPane }: { pane: Pane; setPane: (p: Pane) => void
     { id: 'schemas', label: 'Schemas & runes', schema: 'Source' },
     { group: 'vault' },
     { id: 'vault', label: 'Vault', schema: 'Place' },
+    { id: 'sync', label: 'Sync', schema: 'Person' },
     { id: 'shortcuts', label: 'Shortcuts', schema: 'Daily' },
   ];
   return (
