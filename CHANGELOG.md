@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed folder-qualified wikilinks: `[[Folder/Note]]`, `[[Folder/Note.md]]`, and any
+  trailing part of a note's path now resolve, so two notes sharing a file name can be
+  linked apart. Renaming a note keeps the form each link was written in.
+
 ## [2.1.2] - 2026-07-22
 
 ### Fixed

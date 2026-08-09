@@ -18,9 +18,11 @@ it and your Markdown remains untouched.
 - **Threads** — any `- [ ]` checkbox you write becomes a task in the global Table, Kanban,
   and Calendar views. Edits propagate both ways: check it in the board and the Markdown
   file is rewritten; metadata rides along as `@due(2026-06-01) @p(high) @status(working) #tag`.
-- **Wikilinks & backlinks** — `[[Note]]` links resolve across the vault; the editor's
-  right panel shows backlinks with snippets, threads in the note, and the outline.
-  Renaming a note rewrites every wikilink that points at it.
+- **Wikilinks & backlinks** — `[[Note]]`, `[[Folder/Note]]`, and `[[Folder/Note.md]]` all
+  resolve across the vault; folder-qualified links keep two notes with the same file name
+  apart. The editor's right panel shows backlinks with snippets, threads in the note, and
+  the outline. Renaming a note rewrites every wikilink that points at it, in whichever
+  form it was written.
 - **The Logbook** — the Today view: week activity, open threads, the saga (recent
   activity), recently touched notes, a pinned note, and honest vault stats.
 - **The Constellation** — a stable graph. Star positions are laid out once, persisted, and
