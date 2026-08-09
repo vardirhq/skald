@@ -21,6 +21,7 @@ import {
   splitMarkdownBlocks,
   type MarkdownBlock,
 } from '../../src-shared/liveMarkdown';
+import { buildLinkIndex, resolveLinkTarget } from '../../src-shared/wikilinks';
 
 type EditorMode = 'live' | 'preview' | 'source';
 
@@ -53,6 +54,7 @@ export function EditorView({
     () => snapshot.notes.find((n) => n.path === path) ?? null,
     [snapshot.notes, path]
   );
+  const linkIndex = useMemo(() => buildLinkIndex(snapshot.notes), [snapshot.notes]);
   const dirty = draft !== null && draft !== payload?.content;
 
   const load = useCallback(async () => {
@@ -218,15 +220,7 @@ export function EditorView({
   const bodyStartLine = parsedContent.bodyStartLine;
 
   const mdCtx: MdContext = {
-    resolve: (target) => {
-      const lower = target.trim().toLowerCase();
-      const hit = snapshot.notes.find(
-        (n) =>
-          n.title.toLowerCase() === lower ||
-          n.path.toLowerCase().replace(/\.md$/, '').split('/').pop() === lower
-      );
-      return hit?.path ?? null;
-    },
+    resolve: (target) => resolveLinkTarget(linkIndex, target),
     openNote,
     openExternal: (url) => window.open(url),
     resolveAttachment: attachmentFor,

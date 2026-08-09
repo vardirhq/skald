@@ -187,6 +187,50 @@ describe('Vault end-to-end', () => {
     expect(stackMeta.links).toEqual([newPath]);
   });
 
+  it('resolves folder-qualified wikilinks, keeping same-named notes apart', async () => {
+    mkdirSync(join(dir, 'Notes'));
+    writeFileSync(join(dir, 'Notes', 'Skald.md'), 'The note about the app.\n');
+    writeFileSync(join(dir, 'Projects', 'Skald.md'), 'The project.\n');
+    writeFileSync(
+      join(dir, 'Index.md'),
+      [
+        'Reading: [[Notes/Skald]] and [[Projects/Skald]].',
+        'Also [[Projects/Jormungandr.md]] and [[Stack decisions]].',
+        '',
+      ].join('\n')
+    );
+    vault = await makeVault();
+    const snap = vault.snapshot();
+
+    const index = snap.notes.find((n) => n.path === 'Index.md')!;
+    expect(index.unresolved).toEqual([]);
+    expect(index.links.sort()).toEqual([
+      'Notes/Skald.md',
+      'Projects/Jormungandr.md',
+      'Projects/Skald.md',
+      'Stack decisions.md',
+    ]);
+
+    // the folder-qualified mention counts as a backlink on the right note
+    expect(vault.readNote('Notes/Skald.md').backlinks.map((b) => b.path)).toEqual(['Index.md']);
+    expect(vault.readNote('Projects/Skald.md').backlinks.map((b) => b.path)).toEqual(['Index.md']);
+    expect(vault.resolveTarget('notes/skald.md')).toBe('Notes/Skald.md');
+  });
+
+  it('rewrites folder-qualified wikilinks on rename', async () => {
+    writeFileSync(
+      join(dir, 'Index.md'),
+      'Both [[Projects/Jormungandr]] and [[Jormungandr|the serpent]].\n'
+    );
+    vault = await makeVault();
+    await vault.renameNote('Projects/Jormungandr.md', 'World Serpent');
+
+    const index = readFileSync(join(dir, 'Index.md'), 'utf-8');
+    expect(index).toContain('[[Projects/World Serpent]]');
+    expect(index).toContain('[[World Serpent|the serpent]]');
+    expect(vault.snapshot().notes.find((n) => n.path === 'Index.md')!.unresolved).toEqual([]);
+  });
+
   it('deletes notes and updates stats', async () => {
     vault = await makeVault();
     await vault.deleteNote('Daily/2026-05-28.md');

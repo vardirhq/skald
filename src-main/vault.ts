@@ -7,8 +7,12 @@ import { extractTasks, updateTaskLine, formatTaskLine, taskId, type TaskEdits } 
 import {
   extractWikilinkTargets,
   countWikilinks,
-  renameWikilinks,
+  rewriteWikilinks,
+  retargetWikilink,
+  buildLinkIndex,
+  resolveLinkTarget,
   snippetAround,
+  type LinkIndex,
 } from '../src-shared/wikilinks';
 import {
   inferSchema,
@@ -325,25 +329,19 @@ export class Vault {
 
   // ---------- resolution ----------
 
-  /** Map lowercase title AND lowercase path-stem to path. */
-  private titleIndex(): Map<string, string> {
-    const idx = new Map<string, string>();
-    for (const rec of this.notes.values()) {
-      idx.set(rec.title.toLowerCase(), rec.path);
-      const stem = titleFromPath(rec.path).toLowerCase();
-      if (!idx.has(stem)) idx.set(stem, rec.path);
-    }
-    return idx;
+  /** Index every note by path, title and trailing path fragments. */
+  private linkIndex(): LinkIndex {
+    return buildLinkIndex(this.notes.values());
   }
 
   resolveTarget(name: string): string | null {
-    return this.titleIndex().get(name.trim().toLowerCase()) ?? null;
+    return resolveLinkTarget(this.linkIndex(), name);
   }
 
   // ---------- snapshot ----------
 
   snapshot(): VaultSnapshot {
-    const idx = this.titleIndex();
+    const idx = this.linkIndex();
     const notes: NoteMeta[] = [];
     const tasks: TaskItem[] = [];
     const edgeSet = new Set<string>();
@@ -354,11 +352,18 @@ export class Vault {
 
     for (const rec of this.notes.values()) {
       const links: string[] = [];
+      const linked = new Set<string>();
       const unresolved: string[] = [];
+      let resolvedHere = 0;
       for (const target of rec.linkTargets) {
-        const hit = idx.get(target.toLowerCase());
+        const hit = resolveLinkTarget(idx, target);
         if (hit && hit !== rec.path) {
-          links.push(hit);
+          resolvedHere++;
+          // Two spellings of one note ([[Note]] and [[Folder/Note]]) are a single link.
+          if (!linked.has(hit)) {
+            linked.add(hit);
+            links.push(hit);
+          }
           linkedInto.add(hit);
           const key = [rec.path, hit].sort().join(' ');
           if (!edgeSet.has(key)) {
@@ -370,7 +375,7 @@ export class Vault {
         }
       }
       wikilinksTotal += rec.wikilinkCount;
-      resolvedTotal += links.length;
+      resolvedTotal += resolvedHere;
 
       const rawTasks = extractTasks(rec.body, rec.bodyStartLine);
       for (const t of rawTasks) {
@@ -491,15 +496,17 @@ export class Vault {
     const ids = [...this.notes.keys()];
     const missing = ids.some((id) => !this.positions[id]);
     if (!missing) return;
-    const idx = this.titleIndex();
+    const idx = this.linkIndex();
     const edges: [string, string][] = [];
+    const folders: Record<string, string> = {};
     for (const rec of this.notes.values()) {
+      folders[rec.path] = rec.folder;
       for (const t of rec.linkTargets) {
-        const hit = idx.get(t.toLowerCase());
+        const hit = resolveLinkTarget(idx, t);
         if (hit && hit !== rec.path) edges.push([rec.path, hit]);
       }
     }
-    this.positions = { ...this.positions, ...layoutGraph(ids, edges, this.positions) };
+    this.positions = { ...this.positions, ...layoutGraph(ids, edges, this.positions, folders) };
     this.savePositions();
   }
 
@@ -553,10 +560,10 @@ export class Vault {
 
   private backlinksFor(rec: NoteRecord): BacklinkRef[] {
     const out: BacklinkRef[] = [];
-    const names = new Set([rec.title.toLowerCase(), titleFromPath(rec.path).toLowerCase()]);
+    const idx = this.linkIndex();
     for (const other of this.notes.values()) {
       if (other.path === rec.path) continue;
-      const hit = other.linkTargets.find((t) => names.has(t.toLowerCase()));
+      const hit = other.linkTargets.find((t) => resolveLinkTarget(idx, t) === rec.path);
       if (!hit) continue;
       out.push({
         path: other.path,
@@ -842,7 +849,6 @@ export class Vault {
     const rec = this.notes.get(path);
     if (!rec) throw new Error(`Note not found: ${path}`);
     const oldTitle = rec.title;
-    const oldStem = titleFromPath(path);
     const name = safeFileName(newTitle);
     if (!name) throw new Error('Empty name');
     const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
@@ -853,18 +859,16 @@ export class Vault {
     }
     await this.storeHistory(path, rec.raw, 'rename', true);
 
-    // Update wikilinks across the vault that pointed at the old title/stem.
+    // Update every wikilink across the vault that resolved to this note, whether
+    // it was written bare, folder-qualified or as a full path.
+    const idx = this.linkIndex();
+    const pointsHere = (target: string): boolean => resolveLinkTarget(idx, target) === path;
     for (const other of this.notes.values()) {
       if (other.path === path) continue;
-      const touched =
-        other.linkTargets.some((t) => t.toLowerCase() === oldTitle.toLowerCase()) ||
-        other.linkTargets.some((t) => t.toLowerCase() === oldStem.toLowerCase());
-      if (!touched) continue;
-      let raw = other.raw;
-      raw = renameWikilinks(raw, oldTitle, name);
-      if (oldStem.toLowerCase() !== oldTitle.toLowerCase()) {
-        raw = renameWikilinks(raw, oldStem, name);
-      }
+      if (!other.linkTargets.some(pointsHere)) continue;
+      const raw = rewriteWikilinks(other.raw, pointsHere, (target) =>
+        retargetWikilink(target, newPath)
+      );
       await this.writeNote(other.path, raw, { silent: true });
     }
 
