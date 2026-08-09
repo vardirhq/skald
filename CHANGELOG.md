@@ -7,6 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added zoom and pan to the Constellation: wheel or pinch to zoom around the cursor,
+  drag the background to pan, and `+` / `−` / `0` (or the on-screen controls) to zoom
+  and fit. Dragging a star still works at any zoom level.
+- Added folder clustering to the graph layout — a fresh layout gathers each folder
+  around its own centre instead of scattering notes across the map, and the named
+  cluster regions can now be toggled off.
+- Added an opening animation to the Constellation: stars fade in from the most
+  connected outwards, then the threads between them. Honours reduced-motion settings.
+
 ### Fixed
 
 - Fixed folder-qualified wikilinks: `[[Folder/Note]]`, `[[Folder/Note.md]]`, and any

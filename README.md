@@ -26,7 +26,9 @@ it and your Markdown remains untouched.
 - **The Logbook** — the Today view: week activity, open threads, the saga (recent
   activity), recently touched notes, a pinned note, and honest vault stats.
 - **The Constellation** — a stable graph. Star positions are laid out once, persisted, and
-  draggable; folders appear as named clusters. Your map is a place, not a simulation.
+  draggable; a fresh layout gathers each folder into its own cluster, drawn as a named
+  region you can hide. Zoom with the wheel or pinch, drag the background to pan, `0` to
+  fit. Your map is a place, not a simulation.
 - **Local note history** — Skald snapshots notes before edits, external changes, renames,
   deletions, and restores. Earlier versions can be previewed and restored from the editor.
 - **First-class attachments** — pick or drop any file, paste clipboard images, and Skald
@@ -95,6 +97,7 @@ Repo layout:
 | `⌘E` | Toggle reading / source view |
 | `⌘B` | Toggle right panel |
 | `⌘G` | Constellation |
+| `+` / `−` / `0` | Zoom in, zoom out, fit the map (Constellation) |
 | `⌘S` | Save now (autosave is always on) |
 
 ## License

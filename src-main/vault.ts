@@ -498,13 +498,15 @@ export class Vault {
     if (!missing) return;
     const idx = this.linkIndex();
     const edges: [string, string][] = [];
+    const folders: Record<string, string> = {};
     for (const rec of this.notes.values()) {
+      folders[rec.path] = rec.folder;
       for (const t of rec.linkTargets) {
         const hit = resolveLinkTarget(idx, t);
         if (hit && hit !== rec.path) edges.push([rec.path, hit]);
       }
     }
-    this.positions = { ...this.positions, ...layoutGraph(ids, edges, this.positions) };
+    this.positions = { ...this.positions, ...layoutGraph(ids, edges, this.positions, folders) };
     this.savePositions();
   }
 
