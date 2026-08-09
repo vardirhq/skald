@@ -8,11 +8,13 @@ import type {
   VaultSnapshot,
 } from '../src-shared/types';
 import type { TaskEdits } from '../src-shared/tasks';
+import type { PairingTicket, SyncDeviceInfo, SyncStatus } from '../src-shared/sync/types';
 
 interface Bridge {
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
   pathForFile: (file: File) => string;
   onVaultChanged: (cb: (snapshot: unknown) => void) => () => void;
+  onSyncChanged: (cb: (status: unknown) => void) => () => void;
   onWindowMaximized: (cb: (maximized: boolean) => void) => () => void;
 }
 
@@ -79,6 +81,20 @@ export const api = {
   setGraphPosition: (path: string, x: number, y: number) =>
     bridge().invoke('graph:setPosition', path, x, y) as Promise<void>,
   resetGraphLayout: () => bridge().invoke('graph:resetLayout') as Promise<void>,
+
+  // sync
+  syncStatus: () => bridge().invoke('sync:status') as Promise<SyncStatus>,
+  syncConnect: (input: { serverUrl: string; handle?: string; provisioningSecret?: string }) =>
+    bridge().invoke('sync:connect', input) as Promise<SyncStatus>,
+  syncPair: (uri: string) => bridge().invoke('sync:pair', uri) as Promise<SyncStatus>,
+  syncMintPairing: () => bridge().invoke('sync:mintPairing') as Promise<PairingTicket>,
+  syncDevices: () => bridge().invoke('sync:devices') as Promise<SyncDeviceInfo[]>,
+  syncRevoke: (deviceId: string) => bridge().invoke('sync:revoke', deviceId) as Promise<SyncDeviceInfo[]>,
+  syncNow: () => bridge().invoke('sync:now') as Promise<SyncStatus>,
+  syncPushSnapshot: () => bridge().invoke('sync:snapshot') as Promise<SyncStatus>,
+  syncSetEnabled: (enabled: boolean) => bridge().invoke('sync:setEnabled', enabled) as Promise<SyncStatus>,
+  syncDisconnect: () => bridge().invoke('sync:disconnect') as Promise<SyncStatus>,
+  onSyncChanged: (cb: (s: SyncStatus) => void) => bridge().onSyncChanged(cb as (s: unknown) => void),
 
   // window
   minimize: () => bridge().invoke('window:minimize') as Promise<void>,

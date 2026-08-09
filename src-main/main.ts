@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { Vault } from './vault';
+import { SyncEngine } from './sync';
 import { loadAppConfig, saveAppConfig } from './config';
 import type { VaultSettings } from '../src-shared/types';
 import type { TaskEdits } from '../src-shared/tasks';
@@ -11,6 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let mainWindow: BrowserWindow | null = null;
 let vault: Vault | null = null;
+let sync: SyncEngine | null = null;
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'skald-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -61,14 +63,22 @@ function createWindow() {
 }
 
 async function openVault(path: string, seedIfEmpty = false): Promise<unknown> {
+  sync?.dispose();
+  sync = null;
   await vault?.close();
   vault = new Vault(path, (snapshot) => {
     mainWindow?.webContents.send('vault:changed', snapshot);
+    // A local edit is a reason to publish, but only once the burst settles.
+    sync?.scheduleSync();
   });
   await vault.open();
   if (seedIfEmpty && vault.snapshot().notes.length === 0) {
     await vault.seed();
   }
+  sync = new SyncEngine({
+    vault,
+    onStatus: (status) => mainWindow?.webContents.send('sync:changed', status),
+  });
   saveAppConfig({ lastVault: path });
   return vault.snapshot();
 }
@@ -76,6 +86,11 @@ async function openVault(path: string, seedIfEmpty = false): Promise<unknown> {
 function requireVault(): Vault {
   if (!vault) throw new Error('No vault open');
   return vault;
+}
+
+function requireSync(): SyncEngine {
+  if (!sync) throw new Error('No vault open');
+  return sync;
 }
 
 app.whenReady().then(() => {
@@ -101,6 +116,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async () => {
+  sync?.dispose();
   await vault?.close();
 });
 
@@ -192,6 +208,20 @@ function registerIpc() {
     requireVault().setGraphPosition(path, x, y)
   );
   ipcMain.handle('graph:resetLayout', () => requireVault().resetGraphLayout());
+
+  // ----- sync -----
+  ipcMain.handle('sync:status', () => requireSync().status());
+  ipcMain.handle('sync:connect', (_e, input: { serverUrl: string; handle?: string; provisioningSecret?: string }) =>
+    requireSync().connect(input)
+  );
+  ipcMain.handle('sync:pair', (_e, uri: string) => requireSync().pair(uri));
+  ipcMain.handle('sync:mintPairing', () => requireSync().mintPairing());
+  ipcMain.handle('sync:devices', () => requireSync().listDevices());
+  ipcMain.handle('sync:revoke', (_e, deviceId: string) => requireSync().revokeDevice(deviceId));
+  ipcMain.handle('sync:now', () => requireSync().syncNow());
+  ipcMain.handle('sync:snapshot', () => requireSync().pushSnapshot());
+  ipcMain.handle('sync:setEnabled', (_e, enabled: boolean) => requireSync().setEnabled(enabled));
+  ipcMain.handle('sync:disconnect', () => requireSync().disconnect());
 
   // ----- window controls -----
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());

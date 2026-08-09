@@ -721,11 +721,11 @@ export class Vault {
     }
     const entries = await Promise.all(
       names
-        .filter((name) => /^\d+-(edit|external|rename|delete|restore)\.md$/.test(name))
+        .filter((name) => /^\d+-(edit|external|rename|delete|restore|sync)\.md$/.test(name))
         .map(async (id): Promise<NoteHistoryEntry | null> => {
           try {
             const info = await stat(join(dir, id));
-            const match = id.match(/^(\d+)-(edit|external|rename|delete|restore)\.md$/);
+            const match = id.match(/^(\d+)-(edit|external|rename|delete|restore|sync)\.md$/);
             if (!match) return null;
             return {
               id,
@@ -745,7 +745,7 @@ export class Vault {
   }
 
   async readNoteHistoryVersion(path: string, id: string): Promise<NoteHistoryVersion> {
-    if (basename(id) !== id || !/^\d+-(edit|external|rename|delete|restore)\.md$/.test(id)) {
+    if (basename(id) !== id || !/^\d+-(edit|external|rename|delete|restore|sync)\.md$/.test(id)) {
       throw new Error('Invalid history version');
     }
     const entry = (await this.listNoteHistory(path)).find((item) => item.id === id);
@@ -995,6 +995,63 @@ export class Vault {
     await this.writeNote(notePath, raw, { silent: true });
     this.recordActivity({ kind: 'task', verb: 'added', title: content, ref: rec.title, ts: Date.now() });
     this.broadcast();
+  }
+
+  // ---------- sync ----------
+  //
+  // The sync engine works in whole files. These are the only doors it goes
+  // through, and each one is deliberately narrow: it can enumerate notes, read
+  // one, write one, delete one, and force a history snapshot before losing a
+  // local edit to a remote one.
+
+  /** Every note the engine may publish, as raw file content. */
+  syncFiles(): { path: string; raw: string }[] {
+    return [...this.notes.values()].map((rec) => ({ path: rec.path, raw: rec.raw }));
+  }
+
+  /** Raw content of one note, or null when it is not in the vault. */
+  syncRead(path: string): string | null {
+    return this.notes.get(path)?.raw ?? null;
+  }
+
+  /** Applies a note received from another device. */
+  async syncWrite(path: string, content: string): Promise<void> {
+    const previous = this.notes.get(path);
+    if (previous?.raw === content) return;
+    const existed = !!previous;
+    // Always keep what sync is about to replace. The ordinary edit path
+    // coalesces rapid history entries, which would be exactly the wrong
+    // behaviour here: the text being overwritten came from a person, and it is
+    // not being replaced by their next keystroke but by another device.
+    if (previous) await this.storeHistory(path, previous.raw, 'sync', true);
+    await this.writeNote(path, content, { silent: true, history: false });
+    const rec = this.notes.get(path);
+    if (!rec) return;
+    this.recordActivity({
+      kind: 'note',
+      verb: existed ? 'synced' : 'received',
+      title: rec.title,
+      ref: rec.folder || 'vault',
+      ts: Date.now(),
+    });
+    this.broadcast();
+  }
+
+  /** Applies a deletion received from another device. */
+  async syncDelete(path: string): Promise<void> {
+    if (!this.notes.has(path)) return;
+    await this.deleteNote(path);
+  }
+
+  /**
+   * Forces the note's current content into its history before something else
+   * overwrites it. Used when a local edit loses a sync conflict, so the losing
+   * side is recoverable from the editor rather than gone.
+   */
+  async captureVersion(path: string, reason: NoteHistoryReason): Promise<void> {
+    const rec = this.notes.get(path);
+    if (!rec) return;
+    await this.storeHistory(path, rec.raw, reason, true);
   }
 
   // ---------- settings / graph / activity ----------

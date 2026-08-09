@@ -38,6 +38,13 @@ it and your Markdown remains untouched.
   one shortcut away when you want to work directly with the Markdown file.
 - **Skald's Hall** — `⌘K` fuzzy search across notes, tasks, and commands with a live
   preview pane.
+- **Encrypted sync** — pair a second device and your vault follows, through
+  [GESH](https://github.com/vardirhq/generic-encrypted-sync-hub): a relay that holds
+  encrypted blobs just long enough to hand them over. Notes are sealed with AES-256-GCM
+  before they leave the machine, and the content key never reaches the server — it rides
+  to a new device only in the fragment of a pairing QR code, the part no server receives.
+  Conflicts resolve to the same winner on every device, and the losing text is kept in
+  that note's history. See [docs/sync.md](docs/sync.md).
 - **Three surfaces** — Midnight, Slate, and Daybreak themes; three densities; three marks.
 
 ## Screenshots
@@ -55,7 +62,10 @@ it and your Markdown remains untouched.
 npm install
 npm run electron:dev   # dev server + electron
 npm run typecheck
-npm test               # vitest — core logic + vault end-to-end
+npm test               # vitest — core logic, vault, and sync end-to-end
+
+# smoke-test the sync client against a real GESH relay (skipped without the variable)
+GESH_URL=https://gesh.vardir.no npx vitest run tests/gesh-live.test.ts
 npm run electron:pack  # build distributables
 ```
 

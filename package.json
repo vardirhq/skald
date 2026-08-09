@@ -32,7 +32,7 @@
   "build": {
     "appId": "dev.madsens.skald",
     "productName": "Skald",
-    "copyright": "Copyright \u00a9 2026 Christoffer Madsen",
+    "copyright": "Copyright © 2026 Christoffer Madsen",
     "directories": {
       "buildResources": "build",
       "output": "release"
@@ -81,14 +81,15 @@
     "cross-env": "^7.0.3",
     "electron": "^31.0.0",
     "electron-builder": "^24.9.1",
+    "playwright-core": "^1.44.0",
     "typescript": "^5.4.5",
     "vite": "^5.0.11",
     "vitest": "^1.6.0",
-    "wait-on": "^7.2.0",
-    "playwright-core": "^1.44.0"
+    "wait-on": "^7.2.0"
   },
   "dependencies": {
     "chokidar": "^3.6.0",
+    "qrcode-generator": "^2.0.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "zustand": "^4.5.2"

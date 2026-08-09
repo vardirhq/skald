@@ -11,6 +11,11 @@ const api = {
     ipcRenderer.on('vault:changed', handler);
     return () => ipcRenderer.removeListener('vault:changed', handler);
   },
+  onSyncChanged: (cb: (status: unknown) => void) => {
+    const handler = (_e: unknown, status: unknown) => cb(status);
+    ipcRenderer.on('sync:changed', handler);
+    return () => ipcRenderer.removeListener('sync:changed', handler);
+  },
   onWindowMaximized: (cb: (maximized: boolean) => void) => {
     const handler = (_e: unknown, maximized: boolean) => cb(maximized);
     ipcRenderer.on('window:maximized', handler);

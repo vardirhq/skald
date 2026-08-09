@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2021",
-    "lib": ["ES2021"],
+    // DOM is here for the web platform globals the main process really does
+    // have — fetch, Response, WebCrypto, TextEncoder — which the portable GESH
+    // client is written against so the same files run in a mobile app.
+    "lib": ["ES2021", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
