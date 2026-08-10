@@ -24,9 +24,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added conflict resolution that converges on the same winner on every device, and never
   discards the losing text: it is written into that note's history first, and appears in
   the editor's history list as "Replaced by sync".
+- Added real key handling to the live editor. Enter ends the block you are in
+  and opens a new one with the caret in it, Shift+Enter breaks the line without
+  leaving the block, Enter inside a list opens the next item (numbering and
+  checkboxes included) and leaves the list on an empty one, and Backspace at the
+  top of a block reaches into the one above.
 - Added a portable GESH client under `src-shared/gesh/` and `src-shared/sync/`, with no
   Node or Electron imports, so a future mobile client can reuse the protocol, sealing,
   pairing and merge logic unchanged. See [docs/sync.md](docs/sync.md).
+
+### Fixed
+
+- Fixed line breaks in the live editor. Pressing Enter moved the newline out of
+  the block being edited and into a new empty one below, so the keystroke looked
+  like it had done nothing but add a box — the caret stayed behind and the break
+  was unreachable. The caret is now tracked as a position in the note rather than
+  an offset into a block, so it follows an edit that re-splits the blocks under it.
 
 ## [2.1.4] - 2026-08-09
 

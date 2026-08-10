@@ -16,8 +16,12 @@ import { taskId } from '../../src-shared/tasks';
 import { countWords } from '../../src-shared/notes';
 import { parseFrontmatter } from '../../src-shared/frontmatter';
 import {
+  enterInBlock,
+  offsetAt,
+  positionAt,
   replaceMarkdownBody,
   replaceMarkdownBlock,
+  softBreakInBlock,
   splitMarkdownBlocks,
   type MarkdownBlock,
 } from '../../src-shared/liveMarkdown';
@@ -726,6 +730,18 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
 }
 
+/** Keys that move the caret without changing the text. */
+const CARET_KEYS = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+]);
+
 function LiveMarkdownEditor({
   body,
   ctx,
@@ -741,24 +757,45 @@ function LiveMarkdownEditor({
   onBlur: () => void;
   onLnCol: (pos: [number, number] | null) => void;
 }) {
-  const [activeStartLine, setActiveStartLine] = useState<number | null>(null);
+  // The caret is held as a position in the whole body, not an offset in one
+  // block. A keystroke can re-split the blocks under it — pressing Enter is
+  // exactly that — and a line and column survive the resplit where a block
+  // reference would not.
+  const [caret, setCaret] = useState<{ line: number; col: number } | null>(null);
   const activeRef = useRef<HTMLTextAreaElement>(null);
   const blocks = useMemo(() => splitMarkdownBlocks(body), [body]);
 
-  useEffect(() => {
-    if (activeStartLine === null) return;
-    requestAnimationFrame(() => {
-      const ta = activeRef.current;
-      if (!ta) return;
-      ta.focus();
-      ta.selectionStart = ta.value.length;
-      ta.selectionEnd = ta.value.length;
-      updateLiveLnCol(ta, ctx.lineOffset + activeStartLine, onLnCol);
-    });
-  }, [activeStartLine, onLnCol]);
+  const activeIndex = caret
+    ? blocks.findIndex((b) => caret.line >= b.startLine && caret.line <= b.endLine)
+    : -1;
 
-  const beginEdit = (block: MarkdownBlock) => {
-    setActiveStartLine(block.startLine);
+  useEffect(() => {
+    if (!caret || activeIndex < 0) return;
+    const ta = activeRef.current;
+    const block = blocks[activeIndex];
+    if (!ta || !block) return;
+    const want = offsetAt(block.raw, caret.line - block.startLine, caret.col);
+    if (document.activeElement !== ta) ta.focus();
+    if (ta.selectionStart !== want || ta.selectionEnd !== want) ta.setSelectionRange(want, want);
+    updateLiveLnCol(ta, ctx.lineOffset + block.startLine, onLnCol);
+  }, [caret, activeIndex, blocks, ctx.lineOffset, onLnCol]);
+
+  /** Put the caret somewhere in the body, in whichever block now holds it. */
+  const moveCaret = (line: number, col: number) => setCaret({ line, col });
+
+  const beginEdit = (block: MarkdownBlock, atEnd = true) => {
+    const lines = block.raw.split('\n');
+    moveCaret(
+      atEnd ? block.startLine + lines.length - 1 : block.startLine,
+      atEnd ? lines[lines.length - 1].length : 0
+    );
+  };
+
+  /** Apply an edit to one block and land the caret where the edit asked. */
+  const applyEdit = (block: MarkdownBlock, edit: { raw: string; caret: number }) => {
+    onChange(replaceMarkdownBlock(body, block, edit.raw));
+    const pos = positionAt(edit.raw, edit.caret);
+    moveCaret(block.startLine + pos.line, pos.col);
   };
 
   const commitBlur = () => {
@@ -768,9 +805,8 @@ function LiveMarkdownEditor({
 
   return (
     <div className="editor-body editor-body--live">
-      {blocks.map((block) => {
-        const active = block.startLine === activeStartLine;
-        if (active) {
+      {blocks.map((block, index) => {
+        if (index === activeIndex) {
           return (
             <div key={`edit-${block.id}`} className="live-block live-block--active" data-kind={block.kind}>
               <textarea
@@ -781,17 +817,67 @@ function LiveMarkdownEditor({
                 spellCheck
                 style={{ fontSize }}
                 onChange={(e) => {
-                  const next = replaceMarkdownBlock(body, block, e.target.value);
-                  onChange(next);
+                  const value = e.target.value;
+                  const pos = positionAt(value, e.target.selectionStart);
+                  onChange(replaceMarkdownBlock(body, block, value));
+                  moveCaret(block.startLine + pos.line, pos.col);
                 }}
-                onClick={(e) => updateLiveLnCol(e.currentTarget, ctx.lineOffset + block.startLine, onLnCol)}
-                onKeyUp={(e) => updateLiveLnCol(e.currentTarget, ctx.lineOffset + block.startLine, onLnCol)}
+                onClick={(e) => {
+                  const pos = positionAt(e.currentTarget.value, e.currentTarget.selectionStart);
+                  moveCaret(block.startLine + pos.line, pos.col);
+                }}
+                onKeyUp={(e) => {
+                  // Only keys that move the caret without changing the text. A
+                  // keyup after an edit would read a block that has already been
+                  // re-split and put the caret back where it no longer belongs.
+                  if (!CARET_KEYS.has(e.key)) return;
+                  const pos = positionAt(e.currentTarget.value, e.currentTarget.selectionStart);
+                  moveCaret(block.startLine + pos.line, pos.col);
+                }}
                 onKeyDown={(e) => {
+                  const ta = e.currentTarget;
+                  const at = ta.selectionStart;
+                  const collapsed = ta.selectionStart === ta.selectionEnd;
+
                   if (e.key === 'Escape') {
                     e.preventDefault();
-                    setActiveStartLine(null);
+                    setCaret(null);
                     onLnCol(null);
                     onBlur();
+                    return;
+                  }
+
+                  if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && collapsed) {
+                    e.preventDefault();
+                    applyEdit(
+                      block,
+                      e.shiftKey
+                        ? softBreakInBlock(block.kind, ta.value, at)
+                        : enterInBlock(block.kind, ta.value, at)
+                    );
+                    return;
+                  }
+
+                  // Backspace at the very top of a block reaches into the one
+                  // above it — closing the gap between two blocks, or deleting
+                  // a block you opened by accident.
+                  if (e.key === 'Backspace' && collapsed && at === 0 && index > 0) {
+                    e.preventDefault();
+                    const previous = blocks[index - 1];
+                    const span = { startLine: previous.startLine, endLine: block.endLine };
+
+                    if (previous.kind === 'blank') {
+                      // Remove the paragraph break, so this block joins the one above.
+                      onChange(replaceMarkdownBlock(body, span, block.raw));
+                      moveCaret(previous.startLine, 0);
+                      return;
+                    }
+                    // Otherwise the two blocks are already adjacent: fold this
+                    // one onto the end of the last line above, caret at the seam.
+                    const lastLine = previous.raw.split('\n');
+                    onChange(replaceMarkdownBlock(body, span, `${previous.raw}${block.raw}`));
+                    moveCaret(previous.startLine + lastLine.length - 1, lastLine[lastLine.length - 1].length);
+                    return;
                   }
                 }}
                 onBlur={commitBlur}
