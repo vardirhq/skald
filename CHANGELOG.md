@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-10
+
 ### Added
 
 - Added encrypted vault sync over [GESH](https://github.com/vardirhq/generic-encrypted-sync-hub).
@@ -128,7 +130,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Documented local note history and attachment handling in the README.
 - Refreshed the website copy to reflect live editing, attachments, and local note history.
 
-[Unreleased]: https://github.com/vardirhq/skald/compare/v2.1.4...HEAD
+[Unreleased]: https://github.com/vardirhq/skald/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/vardirhq/skald/compare/v2.1.4...v2.2.0
 [2.1.4]: https://github.com/vardirhq/skald/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/vardirhq/skald/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/vardirhq/skald/compare/v2.1.1...v2.1.2
