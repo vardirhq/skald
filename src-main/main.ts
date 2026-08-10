@@ -215,18 +215,36 @@ function registerIpc() {
   ipcMain.handle('graph:resetLayout', () => requireVault().resetGraphLayout());
 
   // ----- sync -----
-  ipcMain.handle('sync:status', () => requireSync().status());
-  ipcMain.handle('sync:connect', (_e, input: { serverUrl: string; handle?: string; provisioningSecret?: string }) =>
+  //
+  // Sync is the one surface that talks to a machine we do not control, so a
+  // failure here gets logged where a person running the app can see it as well
+  // as returned to the renderer. A rejected invoke on its own leaves no trace.
+  const syncHandle = <A extends unknown[], R>(
+    channel: string,
+    handler: (...args: A) => R | Promise<R>
+  ): void => {
+    ipcMain.handle(channel, async (_e, ...args) => {
+      try {
+        return await handler(...(args as A));
+      } catch (err) {
+        console.error(`skald: ${channel} failed —`, err instanceof Error ? err.message : err);
+        throw err;
+      }
+    });
+  };
+
+  syncHandle('sync:status', () => requireSync().status());
+  syncHandle('sync:connect', (input: { serverUrl: string; handle?: string; provisioningSecret?: string }) =>
     requireSync().connect(input)
   );
-  ipcMain.handle('sync:pair', (_e, uri: string) => requireSync().pair(uri));
-  ipcMain.handle('sync:mintPairing', () => requireSync().mintPairing());
-  ipcMain.handle('sync:devices', () => requireSync().listDevices());
-  ipcMain.handle('sync:revoke', (_e, deviceId: string) => requireSync().revokeDevice(deviceId));
-  ipcMain.handle('sync:now', () => requireSync().syncNow());
-  ipcMain.handle('sync:snapshot', () => requireSync().pushSnapshot());
-  ipcMain.handle('sync:setEnabled', (_e, enabled: boolean) => requireSync().setEnabled(enabled));
-  ipcMain.handle('sync:disconnect', () => requireSync().disconnect());
+  syncHandle('sync:pair', (uri: string) => requireSync().pair(uri));
+  syncHandle('sync:mintPairing', () => requireSync().mintPairing());
+  syncHandle('sync:devices', () => requireSync().listDevices());
+  syncHandle('sync:revoke', (deviceId: string) => requireSync().revokeDevice(deviceId));
+  syncHandle('sync:now', () => requireSync().syncNow());
+  syncHandle('sync:snapshot', () => requireSync().pushSnapshot());
+  syncHandle('sync:setEnabled', (enabled: boolean) => requireSync().setEnabled(enabled));
+  syncHandle('sync:disconnect', () => requireSync().disconnect());
 
   // ----- window controls -----
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());

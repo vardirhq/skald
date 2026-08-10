@@ -527,3 +527,47 @@ describe('attachments', () => {
     expect(reads).toBe(0);
   });
 });
+
+describe('setup failures are reported, not swallowed', () => {
+  it('says the server is unreachable rather than hanging silently', async () => {
+    const a = await makeDevice();
+    const offline = new SyncEngine({
+      vault: a.vault,
+      onStatus: () => {},
+      makeClient: (baseUrl) =>
+        new GeshClient({ baseUrl, fetch: () => Promise.reject(new Error('ECONNREFUSED')) }),
+    });
+    engines.push(offline);
+
+    await expect(offline.connect({ serverUrl: 'https://gesh.example.com' })).rejects.toThrow(/unreachable/);
+    expect(offline.status().configured).toBe(false);
+  });
+
+  it('passes a relay’s refusal straight through to the caller', async () => {
+    const a = await makeDevice();
+    gesh.failWhen = (method, path) => (method === 'POST' && path === '/v1/roots' ? 401 : null);
+    await expect(a.engine.connect({ serverUrl: 'https://relay.test' })).rejects.toThrow(
+      /did not accept this credential/
+    );
+    gesh.failWhen = null;
+    expect(a.engine.status().configured).toBe(false);
+    expect(a.engine.status().lastError).toMatch(/did not accept this credential/);
+  });
+
+  it('refuses a relay address that is not a URL, before any request', async () => {
+    const a = await makeDevice();
+    gesh.requestLog.length = 0;
+    await expect(a.engine.connect({ serverUrl: 'gesh.vardir.no' })).rejects.toThrow(/http\(s\) URL/);
+    expect(gesh.requestLog).toHaveLength(0);
+  });
+
+  it('rejects a handle the relay would refuse, before provisioning a root', async () => {
+    const a = await makeDevice();
+    gesh.requestLog.length = 0;
+    await expect(
+      a.engine.connect({ serverUrl: 'https://relay.test', handle: 'Madsen Home' })
+    ).rejects.toThrow(/lowercase letters/);
+    expect(gesh.requestLog).toHaveLength(0);
+    expect(gesh.roots.size).toBe(0);
+  });
+});
