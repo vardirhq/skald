@@ -4,6 +4,9 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // only push channels are vault:changed (snapshots) and window:maximized.
 
 const api = {
+  // The renderer draws the window controls, so it has to know whose
+  // conventions to follow: lights on the left, or buttons on the right.
+  platform: process.platform,
   invoke: (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args),
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   onVaultChanged: (cb: (snapshot: unknown) => void) => {

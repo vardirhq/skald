@@ -91,12 +91,29 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .ic-btn:hover { background: var(--bg-3); color: var(--tx-0); }
 .ic-btn.is-on { color: var(--ac); }
 .ic-btn.sm { width: 22px; height: 22px; }
-.avatar {
-  width: 24px; height: 24px; margin-left: 6px; border-radius: 50%;
-  display: grid; place-items: center;
+/* A badge for the vault, not a person — this app has no accounts. Rounded
+   square rather than a circle so it does not read as one. */
+.vault-badge {
+  width: 24px; height: 24px; margin-left: 6px; border-radius: 7px;
+  display: grid; place-items: center; border: none; padding: 0;
   font-family: var(--font-mono); font-size: 10px; font-weight: 600;
   color: var(--on-ac); background: linear-gradient(150deg, var(--ac), var(--ac-dim));
+  transition: filter var(--fast), box-shadow var(--fast);
 }
+.vault-badge:hover { filter: brightness(1.12); box-shadow: 0 0 0 2px var(--ac-ghost); }
+
+/* Window controls, drawn where the host desktop puts them. */
+.titlebar--right-controls { padding-right: 0; }
+.titlebar--right-controls .titlebar__l { min-width: 180px; }
+.wincontrols { display: flex; align-items: center; margin-left: 8px; align-self: stretch; }
+.wc {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; align-self: stretch; border: none; background: transparent;
+  color: var(--tx-2); border-radius: 0;
+  transition: background var(--fast), color var(--fast);
+}
+.wc:hover { background: var(--bg-3); color: var(--tx-0); }
+.wc--close:hover { background: #d0453f; color: #fff; }
 
 /* ============================ ACTIVITY BAR ============================ */
 .activitybar {

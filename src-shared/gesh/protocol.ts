@@ -172,7 +172,10 @@ export class GeshClient {
     this.baseUrl = trimmed;
     const injected = options.fetch ?? (globalThis.fetch as FetchLike | undefined);
     if (!injected) throw new Error('No fetch implementation available');
-    this.fetchImpl = injected;
+    // Bound to globalThis on purpose. Node's fetch does not care what `this`
+    // is, but a browser's throws "Illegal invocation" when called as a method
+    // of something else — which is exactly what a mobile client would hit.
+    this.fetchImpl = options.fetch ? injected : injected.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 

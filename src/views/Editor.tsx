@@ -16,8 +16,13 @@ import { taskId } from '../../src-shared/tasks';
 import { countWords } from '../../src-shared/notes';
 import { parseFrontmatter } from '../../src-shared/frontmatter';
 import {
+  enterInBlock,
+  offsetAt,
+  positionAt,
   replaceMarkdownBody,
   replaceMarkdownBlock,
+  softBreakInBlock,
+  sourceOffsetFromRendered,
   splitMarkdownBlocks,
   type MarkdownBlock,
 } from '../../src-shared/liveMarkdown';
@@ -726,6 +731,82 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
 }
 
+/**
+ * The rendered text of a block up to the point that was clicked.
+ *
+ * `caretPositionFromPoint` is the standard spelling and `caretRangeFromPoint`
+ * the older WebKit one; Chromium has answered to both for years, so try each.
+ */
+function renderedTextBeforePoint(container: HTMLElement, x: number, y: number): string | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+
+  let node: Node | null = null;
+  let offset = 0;
+  const position = doc.caretPositionFromPoint?.(x, y);
+  if (position) {
+    node = position.offsetNode;
+    offset = position.offset;
+  } else {
+    const range = doc.caretRangeFromPoint?.(x, y);
+    if (!range) return null;
+    node = range.startContainer;
+    offset = range.startOffset;
+  }
+  // A click that lands on padding rather than on text tells us nothing useful.
+  if (!node || node.nodeType !== Node.TEXT_NODE || !container.contains(node)) return null;
+
+  // Text nodes alone lose the structure: two list items concatenate into one
+  // run, and the mapping back to source cannot tell where one ended. Walking
+  // elements too puts a newline back at every boundary a reader can see.
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  let before = '';
+  let current = walker.nextNode();
+  while (current) {
+    if (current.nodeType === Node.ELEMENT_NODE) {
+      if (BREAKS_LINE.has((current as Element).tagName) && before && !before.endsWith('\n')) {
+        before += '\n';
+      }
+    } else {
+      if (current === node) return before + (current.textContent ?? '').slice(0, offset);
+      before += current.textContent ?? '';
+    }
+    current = walker.nextNode();
+  }
+  return null;
+}
+
+/** Elements whose start is a line break as far as a reader is concerned. */
+const BREAKS_LINE = new Set([
+  'BR',
+  'LI',
+  'P',
+  'DIV',
+  'BLOCKQUOTE',
+  'PRE',
+  'TR',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+]);
+
+/** Keys that move the caret without changing the text. */
+const CARET_KEYS = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+]);
+
 function LiveMarkdownEditor({
   body,
   ctx,
@@ -741,24 +822,53 @@ function LiveMarkdownEditor({
   onBlur: () => void;
   onLnCol: (pos: [number, number] | null) => void;
 }) {
-  const [activeStartLine, setActiveStartLine] = useState<number | null>(null);
+  // The caret is held as a position in the whole body, not an offset in one
+  // block. A keystroke can re-split the blocks under it — pressing Enter is
+  // exactly that — and a line and column survive the resplit where a block
+  // reference would not.
+  const [caret, setCaret] = useState<{ line: number; col: number } | null>(null);
   const activeRef = useRef<HTMLTextAreaElement>(null);
   const blocks = useMemo(() => splitMarkdownBlocks(body), [body]);
 
+  const activeIndex = caret
+    ? blocks.findIndex((b) => caret.line >= b.startLine && caret.line <= b.endLine)
+    : -1;
+
   useEffect(() => {
-    if (activeStartLine === null) return;
-    requestAnimationFrame(() => {
-      const ta = activeRef.current;
-      if (!ta) return;
-      ta.focus();
-      ta.selectionStart = ta.value.length;
-      ta.selectionEnd = ta.value.length;
-      updateLiveLnCol(ta, ctx.lineOffset + activeStartLine, onLnCol);
-    });
-  }, [activeStartLine, onLnCol]);
+    if (!caret || activeIndex < 0) return;
+    const ta = activeRef.current;
+    const block = blocks[activeIndex];
+    if (!ta || !block) return;
+    const want = offsetAt(block.raw, caret.line - block.startLine, caret.col);
+    if (document.activeElement !== ta) ta.focus();
+    if (ta.selectionStart !== want || ta.selectionEnd !== want) ta.setSelectionRange(want, want);
+    updateLiveLnCol(ta, ctx.lineOffset + block.startLine, onLnCol);
+  }, [caret, activeIndex, blocks, ctx.lineOffset, onLnCol]);
+
+  /** Put the caret somewhere in the body, in whichever block now holds it. */
+  const moveCaret = (line: number, col: number) => setCaret({ line, col });
 
   const beginEdit = (block: MarkdownBlock) => {
-    setActiveStartLine(block.startLine);
+    const lines = block.raw.split('\n');
+    moveCaret(block.startLine + lines.length - 1, lines[lines.length - 1].length);
+  };
+
+  /** Open a block for editing with the caret where the reader pointed. */
+  const beginEditAt = (block: MarkdownBlock, container: HTMLElement, x: number, y: number) => {
+    const shown = renderedTextBeforePoint(container, x, y);
+    if (shown === null) {
+      beginEdit(block);
+      return;
+    }
+    const pos = positionAt(block.raw, sourceOffsetFromRendered(block.raw, shown));
+    moveCaret(block.startLine + pos.line, pos.col);
+  };
+
+  /** Apply an edit to one block and land the caret where the edit asked. */
+  const applyEdit = (block: MarkdownBlock, edit: { raw: string; caret: number }) => {
+    onChange(replaceMarkdownBlock(body, block, edit.raw));
+    const pos = positionAt(edit.raw, edit.caret);
+    moveCaret(block.startLine + pos.line, pos.col);
   };
 
   const commitBlur = () => {
@@ -768,9 +878,8 @@ function LiveMarkdownEditor({
 
   return (
     <div className="editor-body editor-body--live">
-      {blocks.map((block) => {
-        const active = block.startLine === activeStartLine;
-        if (active) {
+      {blocks.map((block, index) => {
+        if (index === activeIndex) {
           return (
             <div key={`edit-${block.id}`} className="live-block live-block--active" data-kind={block.kind}>
               <textarea
@@ -781,17 +890,67 @@ function LiveMarkdownEditor({
                 spellCheck
                 style={{ fontSize }}
                 onChange={(e) => {
-                  const next = replaceMarkdownBlock(body, block, e.target.value);
-                  onChange(next);
+                  const value = e.target.value;
+                  const pos = positionAt(value, e.target.selectionStart);
+                  onChange(replaceMarkdownBlock(body, block, value));
+                  moveCaret(block.startLine + pos.line, pos.col);
                 }}
-                onClick={(e) => updateLiveLnCol(e.currentTarget, ctx.lineOffset + block.startLine, onLnCol)}
-                onKeyUp={(e) => updateLiveLnCol(e.currentTarget, ctx.lineOffset + block.startLine, onLnCol)}
+                onClick={(e) => {
+                  const pos = positionAt(e.currentTarget.value, e.currentTarget.selectionStart);
+                  moveCaret(block.startLine + pos.line, pos.col);
+                }}
+                onKeyUp={(e) => {
+                  // Only keys that move the caret without changing the text. A
+                  // keyup after an edit would read a block that has already been
+                  // re-split and put the caret back where it no longer belongs.
+                  if (!CARET_KEYS.has(e.key)) return;
+                  const pos = positionAt(e.currentTarget.value, e.currentTarget.selectionStart);
+                  moveCaret(block.startLine + pos.line, pos.col);
+                }}
                 onKeyDown={(e) => {
+                  const ta = e.currentTarget;
+                  const at = ta.selectionStart;
+                  const collapsed = ta.selectionStart === ta.selectionEnd;
+
                   if (e.key === 'Escape') {
                     e.preventDefault();
-                    setActiveStartLine(null);
+                    setCaret(null);
                     onLnCol(null);
                     onBlur();
+                    return;
+                  }
+
+                  if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && collapsed) {
+                    e.preventDefault();
+                    applyEdit(
+                      block,
+                      e.shiftKey
+                        ? softBreakInBlock(block.kind, ta.value, at)
+                        : enterInBlock(block.kind, ta.value, at)
+                    );
+                    return;
+                  }
+
+                  // Backspace at the very top of a block reaches into the one
+                  // above it — closing the gap between two blocks, or deleting
+                  // a block you opened by accident.
+                  if (e.key === 'Backspace' && collapsed && at === 0 && index > 0) {
+                    e.preventDefault();
+                    const previous = blocks[index - 1];
+                    const span = { startLine: previous.startLine, endLine: block.endLine };
+
+                    if (previous.kind === 'blank') {
+                      // Remove the paragraph break, so this block joins the one above.
+                      onChange(replaceMarkdownBlock(body, span, block.raw));
+                      moveCaret(previous.startLine, 0);
+                      return;
+                    }
+                    // Otherwise the two blocks are already adjacent: fold this
+                    // one onto the end of the last line above, caret at the seam.
+                    const lastLine = previous.raw.split('\n');
+                    onChange(replaceMarkdownBlock(body, span, `${previous.raw}${block.raw}`));
+                    moveCaret(previous.startLine + lastLine.length - 1, lastLine[lastLine.length - 1].length);
+                    return;
                   }
                 }}
                 onBlur={commitBlur}
@@ -822,7 +981,7 @@ function LiveMarkdownEditor({
             onClick={(e) => {
               const target = e.target as HTMLElement;
               if (target.closest('a, button, input, .checkbox, .attachment-card, .attachment-image')) return;
-              beginEdit(block);
+              beginEditAt(block, e.currentTarget, e.clientX, e.clientY);
             }}
           >
             {renderMarkdown(block.raw, { ...ctx, lineOffset: ctx.lineOffset + block.startLine })}

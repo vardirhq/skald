@@ -32,9 +32,27 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
   let key = 0;
 
   const flushPara = (buf: string[], startLine: number) => {
-    const text = buf.join(' ').trim();
-    if (!text) return;
-    out.push(<p key={`p${startLine}-${key++}`}>{inline(text, ctx)}</p>);
+    if (!buf.join(' ').trim()) return;
+    // Lines run together into one paragraph, as Markdown says they should —
+    // except where a line asks for a break, with two trailing spaces or a
+    // trailing backslash. That is what Shift+Enter writes.
+    const parts: ReactNode[] = [];
+    let run: string[] = [];
+    const flushRun = () => {
+      if (!run.length) return;
+      parts.push(<Fragment key={`s${startLine}-${key++}`}>{inline(run.join(' ').trim(), ctx)}</Fragment>);
+      run = [];
+    };
+    buf.forEach((line, index) => {
+      const hardBreak = index < buf.length - 1 && /( {2,}|\\)$/.test(line);
+      run.push(hardBreak ? line.replace(/( {2,}|\\)$/, '') : line);
+      if (hardBreak) {
+        flushRun();
+        parts.push(<br key={`br${startLine}-${key++}`} />);
+      }
+    });
+    flushRun();
+    out.push(<p key={`p${startLine}-${key++}`}>{parts}</p>);
   };
 
   while (i < lines.length) {

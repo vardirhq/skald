@@ -87,6 +87,17 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M19 13v6H5V5h6" />
     </>
   ),
+  // Window controls are drawn at 10px on a 24px grid, square and centred, the
+  // way Windows and most Linux desktops draw them.
+  winMinimize: <path d="M7 12h10" />,
+  winMaximize: <rect x="7" y="7" width="10" height="10" rx="1" />,
+  winRestore: (
+    <>
+      <rect x="7" y="9" width="8" height="8" rx="1" />
+      <path d="M9.5 9V7.5A.5.5 0 0 1 10 7h6.5a.5.5 0 0 1 .5.5V14a.5.5 0 0 1-.5.5H15" />
+    </>
+  ),
+  winClose: <path d="m7.5 7.5 9 9M16.5 7.5l-9 9" />,
 };
 
 export function Icon({ name, size = 16 }: { name: keyof typeof PATHS | string; size?: number }) {

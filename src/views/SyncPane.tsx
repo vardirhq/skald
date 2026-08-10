@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PairingTicket, SyncDeviceInfo, SyncStatus } from '../../src-shared/sync/types';
 import { api } from '../api';
 import { useStore, relTimeLong } from '../store';
@@ -11,26 +11,42 @@ import { QrCode } from '../ui/qr';
  */
 export function SyncPane() {
   const [status, setStatus] = useState<SyncStatus | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** Which action is in flight, so its own button can say so. */
+  const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const showToast = useStore((s) => s.showToast);
+  const errorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     void api.syncStatus().then(setStatus);
     return api.onSyncChanged(setStatus);
   }, []);
 
-  /** Every action here can fail against a network, so they all go through this. */
+  // A failure that happens below the fold is a failure nobody sees.
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [error]);
+
+  /**
+   * Every action here crosses a network, so they all go through this: one
+   * in-flight action at a time, named so its button can show it is working, and
+   * any failure surfaced rather than swallowed.
+   *
+   * Each action also returns the authoritative status, and callers apply it
+   * directly. The `sync:changed` push exists to catch background passes — a
+   * button must not depend on it, or a lost event makes a successful action
+   * look like a dead control.
+   */
   const run = useCallback(
-    async <T,>(action: () => Promise<T>, done?: (result: T) => void): Promise<void> => {
-      setBusy(true);
+    async <T,>(label: string, action: () => Promise<T>, done?: (result: T) => void): Promise<void> => {
+      setPending(label);
       setError(null);
       try {
         done?.(await action());
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setBusy(false);
+        setPending(null);
       }
     },
     []
@@ -48,22 +64,41 @@ export function SyncPane() {
         cannot read it.
       </p>
 
-      {error && <div className="sync-banner sync-banner--bad">{error}</div>}
+      {error && (
+        <div className="sync-banner sync-banner--bad" role="alert" ref={errorRef}>
+          {error}
+        </div>
+      )}
 
       {status.configured ? (
-        <ConnectedPanes status={status} busy={busy} run={run} showToast={showToast} />
+        <ConnectedPanes
+          status={status}
+          pending={pending}
+          run={run}
+          applyStatus={setStatus}
+          showToast={showToast}
+        />
       ) : (
-        <SetupPanes busy={busy} run={run} />
+        <SetupPanes pending={pending} run={run} applyStatus={setStatus} />
       )}
     </>
   );
 }
 
-type Run = <T>(action: () => Promise<T>, done?: (result: T) => void) => Promise<void>;
+type Run = <T>(label: string, action: () => Promise<T>, done?: (result: T) => void) => Promise<void>;
 
 // ---------- not connected yet ----------
 
-function SetupPanes({ busy, run }: { busy: boolean; run: Run }) {
+function SetupPanes({
+  pending,
+  run,
+  applyStatus,
+}: {
+  pending: string | null;
+  run: Run;
+  applyStatus: (status: SyncStatus) => void;
+}) {
+  const busy = pending !== null;
   const [serverUrl, setServerUrl] = useState('https://gesh.vardir.no');
   const [handle, setHandle] = useState('');
   const [pairingUri, setPairingUri] = useState('');
@@ -103,15 +138,18 @@ function SetupPanes({ busy, run }: { busy: boolean; run: Run }) {
             className="btn btn--accent"
             disabled={busy || !serverUrl.trim()}
             onClick={() =>
-              void run(() =>
-                api.syncConnect({
-                  serverUrl: serverUrl.trim(),
-                  ...(handle.trim() ? { handle: handle.trim() } : {}),
-                })
+              void run(
+                'connect',
+                () =>
+                  api.syncConnect({
+                    serverUrl: serverUrl.trim(),
+                    ...(handle.trim() ? { handle: handle.trim() } : {}),
+                  }),
+                applyStatus
               )
             }
           >
-            Create sync root
+            {pending === 'connect' ? 'Reaching the relay…' : 'Create sync root'}
           </button>
         </div>
       </div>
@@ -138,9 +176,9 @@ function SetupPanes({ busy, run }: { busy: boolean; run: Run }) {
           <button
             className="btn"
             disabled={busy || !pairingUri.trim()}
-            onClick={() => void run(() => api.syncPair(pairingUri.trim()))}
+            onClick={() => void run('pair', () => api.syncPair(pairingUri.trim()), applyStatus)}
           >
-            Pair this device
+            {pending === 'pair' ? 'Pairing…' : 'Pair this device'}
           </button>
         </div>
       </div>
@@ -152,15 +190,18 @@ function SetupPanes({ busy, run }: { busy: boolean; run: Run }) {
 
 function ConnectedPanes({
   status,
-  busy,
+  pending,
   run,
+  applyStatus,
   showToast,
 }: {
   status: SyncStatus;
-  busy: boolean;
+  pending: string | null;
   run: Run;
+  applyStatus: (status: SyncStatus) => void;
   showToast: (msg: string) => void;
 }) {
+  const busy = pending !== null;
   const [ticket, setTicket] = useState<PairingTicket | null>(null);
   const [devices, setDevices] = useState<SyncDeviceInfo[] | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -196,14 +237,14 @@ function ConnectedPanes({
             <button
               aria-selected={status.enabled}
               disabled={busy}
-              onClick={() => void run(() => api.syncSetEnabled(true))}
+              onClick={() => void run('enable', () => api.syncSetEnabled(true), applyStatus)}
             >
               On
             </button>
             <button
               aria-selected={!status.enabled}
               disabled={busy}
-              onClick={() => void run(() => api.syncSetEnabled(false))}
+              onClick={() => void run('enable', () => api.syncSetEnabled(false), applyStatus)}
             >
               Off
             </button>
@@ -222,11 +263,11 @@ function ConnectedPanes({
         </div>
         <div className="settings__row__r">
           <div className="sync-actions">
-            <button className="btn" disabled={busy} onClick={() => void run(() => api.syncNow())}>
-              Sync now
+            <button className="btn" disabled={busy} onClick={() => void run('now', () => api.syncNow(), applyStatus)}>
+              {pending === 'now' ? 'Syncing…' : 'Sync now'}
             </button>
-            <button className="btn" disabled={busy} onClick={() => void run(() => api.syncPushSnapshot())}>
-              Republish everything
+            <button className="btn" disabled={busy} onClick={() => void run('snapshot', () => api.syncPushSnapshot(), applyStatus)}>
+              {pending === 'snapshot' ? 'Republishing…' : 'Republish everything'}
             </button>
           </div>
         </div>
@@ -246,16 +287,16 @@ function ConnectedPanes({
               <button
                 className="btn btn--accent"
                 disabled={busy}
-                onClick={() => void run(() => api.syncMintPairing(), setTicket)}
+                onClick={() => void run('mint', () => api.syncMintPairing(), setTicket)}
               >
-                {ticket ? 'New pairing code' : 'Pair a device…'}
+                {pending === 'mint' ? 'Preparing…' : ticket ? 'New pairing code' : 'Pair a device…'}
               </button>
             </div>
           </div>
 
           {ticket && <Ticket ticket={ticket} onCopy={copy} />}
 
-          <Devices devices={devices} busy={busy} run={run} setDevices={setDevices} />
+          <Devices devices={devices} pending={pending} run={run} setDevices={setDevices} />
         </>
       ) : (
         <div className="settings__row">
@@ -287,7 +328,12 @@ function ConnectedPanes({
               <button
                 className="btn btn--danger"
                 disabled={busy}
-                onClick={() => void run(() => api.syncDisconnect(), () => setConfirmDisconnect(false))}
+                onClick={() =>
+                  void run('disconnect', () => api.syncDisconnect(), (next) => {
+                    applyStatus(next);
+                    setConfirmDisconnect(false);
+                  })
+                }
               >
                 Disconnect
               </button>
@@ -392,15 +438,16 @@ function Ticket({ ticket, onCopy }: { ticket: PairingTicket; onCopy: (text: stri
 
 function Devices({
   devices,
-  busy,
+  pending,
   run,
   setDevices,
 }: {
   devices: SyncDeviceInfo[] | null;
-  busy: boolean;
+  pending: string | null;
   run: Run;
   setDevices: (devices: SyncDeviceInfo[]) => void;
 }) {
+  const busy = pending !== null;
   return (
     <div className="settings__row settings__row--stack">
       <div className="settings__row__l">
@@ -426,9 +473,9 @@ function Devices({
               <button
                 className="btn btn--danger btn--small"
                 disabled={busy}
-                onClick={() => void run(() => api.syncRevoke(device.deviceId), setDevices)}
+                onClick={() => void run(`revoke:${device.deviceId}`, () => api.syncRevoke(device.deviceId), setDevices)}
               >
-                Revoke
+                {pending === `revoke:${device.deviceId}` ? 'Revoking…' : 'Revoke'}
               </button>
             )}
           </div>

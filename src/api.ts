@@ -11,6 +11,7 @@ import type { TaskEdits } from '../src-shared/tasks';
 import type { PairingTicket, SyncDeviceInfo, SyncStatus } from '../src-shared/sync/types';
 
 interface Bridge {
+  platform?: string;
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
   pathForFile: (file: File) => string;
   onVaultChanged: (cb: (snapshot: unknown) => void) => () => void;
@@ -26,7 +27,21 @@ declare global {
 
 const bridge = () => window.skald;
 
+/**
+ * Which platform's window conventions to follow. Falls back to sniffing the
+ * user agent so the renderer still looks right outside Electron.
+ */
+function hostPlatform(): 'darwin' | 'win32' | 'linux' {
+  const reported = bridge()?.platform;
+  if (reported === 'darwin' || reported === 'win32' || reported === 'linux') return reported;
+  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  if (/Mac|iPhone|iPad/.test(ua)) return 'darwin';
+  if (/Win/.test(ua)) return 'win32';
+  return 'linux';
+}
+
 export const api = {
+  platform: hostPlatform,
   // vault lifecycle
   getLastVault: () => bridge().invoke('vault:getLast') as Promise<string | null>,
   selectVaultDialog: () => bridge().invoke('vault:selectDialog') as Promise<string | null>,
