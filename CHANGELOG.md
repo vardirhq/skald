@@ -29,9 +29,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   leaving the block, Enter inside a list opens the next item (numbering and
   checkboxes included) and leaves the list on an empty one, and Backspace at the
   top of a block reaches into the one above.
+- Added click-to-place-caret in the live editor. Clicking a rendered block now
+  opens it with the caret where you pointed, mapping the position back through
+  the Markdown syntax you cannot see — past a heading's hashes, a link's target,
+  emphasis markers, and a list item's bullet.
+- Added window controls that follow the desktop they are running on: traffic
+  lights on the left for macOS, and minimise/maximise/close buttons on the right
+  for Windows and Linux, with the maximise button reflecting the window state.
 - Added a portable GESH client under `src-shared/gesh/` and `src-shared/sync/`, with no
   Node or Electron imports, so a future mobile client can reuse the protocol, sealing,
   pairing and merge logic unchanged. See [docs/sync.md](docs/sync.md).
+
+### Changed
+
+- The badge in the top-right corner is a vault badge, not a user avatar — this
+  app has no accounts. It now says so: a rounded square rather than a circle,
+  naming the vault in its tooltip, and clicking it switches vault instead of
+  doing nothing.
 
 ### Fixed
 

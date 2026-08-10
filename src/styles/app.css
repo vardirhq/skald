@@ -5,7 +5,7 @@
 
 /* window dragging */
 .titlebar { -webkit-app-region: drag; user-select: none; }
-.titlebar button, .titlebar .avatar { -webkit-app-region: no-drag; }
+.titlebar button, .titlebar .vault-badge { -webkit-app-region: no-drag; }
 .traffic span { cursor: pointer; border: none; padding: 0; -webkit-app-region: no-drag; position: relative; }
 .traffic span:hover { filter: brightness(1.15); }
 

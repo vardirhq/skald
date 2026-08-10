@@ -5,6 +5,7 @@ import {
   positionAt,
   replaceMarkdownBlock,
   softBreakInBlock,
+  sourceOffsetFromRendered,
   splitMarkdownBlocks,
 } from '../src-shared/liveMarkdown';
 
@@ -202,5 +203,84 @@ describe('Shift+Enter', () => {
   it('is a plain newline inside code', () => {
     const after = press('```\nx\n```', 1, 1, 'Shift+Enter');
     expect(after.body).toBe('```\nx\n\n```');
+  });
+});
+
+describe('clicking rendered text', () => {
+  /** Where the caret lands in the source, given what was clicked on screen. */
+  function clickAfter(raw: string, renderedPrefix: string): string {
+    const at = sourceOffsetFromRendered(raw, renderedPrefix);
+    return `${raw.slice(0, at)}|${raw.slice(at)}`;
+  }
+
+  it('lands where the reader pointed in plain prose', () => {
+    expect(clickAfter('The first paragraph.', 'The first')).toBe('The first| paragraph.');
+  });
+
+  it('steps over the syntax of a heading', () => {
+    expect(clickAfter('## A heading', 'A head')).toBe('## A head|ing');
+  });
+
+  it('steps over emphasis around the word clicked', () => {
+    expect(clickAfter('a **bold** word', 'a bold')).toBe('a **bold|** word');
+    expect(clickAfter('a **bold** word', 'a bold w')).toBe('a **bold** w|ord');
+  });
+
+  it('steps over a link target the reader never saw', () => {
+    expect(clickAfter('see [the docs](https://example.com/x) now', 'see the docs')).toBe(
+      'see [the docs|](https://example.com/x) now'
+    );
+    expect(clickAfter('see [the docs](https://example.com/x) now', 'see the docs no')).toBe(
+      'see [the docs](https://example.com/x) no|w'
+    );
+  });
+
+  it('steps over wikilink brackets', () => {
+    expect(clickAfter('linked to [[Jormungandr]] here', 'linked to Jormun')).toBe(
+      'linked to [[Jormun|gandr]] here'
+    );
+  });
+
+  it('treats a rendered space as any run of source whitespace', () => {
+    // A paragraph's source lines are joined with a space when rendered.
+    expect(clickAfter('first line\nsecond line', 'first line second')).toBe(
+      'first line\nsecond| line'
+    );
+  });
+
+  it('finds a bullet clicked in the middle of a list', () => {
+    expect(clickAfter('- milk\n- eggs\n- bread', 'milk\neg')).toBe('- milk\n- eg|gs\n- bread');
+  });
+
+  it('lands past the bullet when the click is at the start of an item', () => {
+    // The reader pointed at the item's text. Landing before the marker would
+    // put the caret somewhere typing breaks the list.
+    expect(clickAfter('- milk\n- eggs', 'milk\n')).toBe('- milk\n- |eggs');
+    expect(clickAfter('1. one\n2. two', 'one\n')).toBe('1. one\n2. |two');
+    expect(clickAfter('- [ ] wash\n- [ ] dry', 'wash\n')).toBe('- [ ] wash\n- [ ] |dry');
+    expect(clickAfter('> first\n> second', 'first\n')).toBe('> first\n> |second');
+  });
+
+  it('does not mistake a joined paragraph line for a marker', () => {
+    // A paragraph's lines join with a space and open with no marker; nothing
+    // should be skipped there.
+    expect(clickAfter('first line\nsecond line', 'first line\n')).toBe('first line\n|second line');
+  });
+
+  it('lands at the start when nothing was clicked before', () => {
+    expect(clickAfter('some text', '')).toBe('|some text');
+  });
+
+  it('lands at the end when everything was clicked past', () => {
+    expect(clickAfter('some text', 'some text')).toBe('some text|');
+  });
+
+  it('gives up gracefully on text that is not the source minus syntax', () => {
+    // A due date renders as "May 1", which appears nowhere in the source. The
+    // caret should stay put rather than run to the end of the block.
+    const raw = '- [ ] ship it @due(2026-05-01)';
+    const at = sourceOffsetFromRendered(raw, 'ship it May 1');
+    expect(at).toBeGreaterThanOrEqual('- [ ] ship it'.length - 1);
+    expect(at).toBeLessThanOrEqual(raw.length);
   });
 });

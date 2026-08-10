@@ -22,6 +22,7 @@ import {
   replaceMarkdownBody,
   replaceMarkdownBlock,
   softBreakInBlock,
+  sourceOffsetFromRendered,
   splitMarkdownBlocks,
   type MarkdownBlock,
 } from '../../src-shared/liveMarkdown';
@@ -730,6 +731,70 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
 }
 
+/**
+ * The rendered text of a block up to the point that was clicked.
+ *
+ * `caretPositionFromPoint` is the standard spelling and `caretRangeFromPoint`
+ * the older WebKit one; Chromium has answered to both for years, so try each.
+ */
+function renderedTextBeforePoint(container: HTMLElement, x: number, y: number): string | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+
+  let node: Node | null = null;
+  let offset = 0;
+  const position = doc.caretPositionFromPoint?.(x, y);
+  if (position) {
+    node = position.offsetNode;
+    offset = position.offset;
+  } else {
+    const range = doc.caretRangeFromPoint?.(x, y);
+    if (!range) return null;
+    node = range.startContainer;
+    offset = range.startOffset;
+  }
+  // A click that lands on padding rather than on text tells us nothing useful.
+  if (!node || node.nodeType !== Node.TEXT_NODE || !container.contains(node)) return null;
+
+  // Text nodes alone lose the structure: two list items concatenate into one
+  // run, and the mapping back to source cannot tell where one ended. Walking
+  // elements too puts a newline back at every boundary a reader can see.
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  let before = '';
+  let current = walker.nextNode();
+  while (current) {
+    if (current.nodeType === Node.ELEMENT_NODE) {
+      if (BREAKS_LINE.has((current as Element).tagName) && before && !before.endsWith('\n')) {
+        before += '\n';
+      }
+    } else {
+      if (current === node) return before + (current.textContent ?? '').slice(0, offset);
+      before += current.textContent ?? '';
+    }
+    current = walker.nextNode();
+  }
+  return null;
+}
+
+/** Elements whose start is a line break as far as a reader is concerned. */
+const BREAKS_LINE = new Set([
+  'BR',
+  'LI',
+  'P',
+  'DIV',
+  'BLOCKQUOTE',
+  'PRE',
+  'TR',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+]);
+
 /** Keys that move the caret without changing the text. */
 const CARET_KEYS = new Set([
   'ArrowLeft',
@@ -783,12 +848,20 @@ function LiveMarkdownEditor({
   /** Put the caret somewhere in the body, in whichever block now holds it. */
   const moveCaret = (line: number, col: number) => setCaret({ line, col });
 
-  const beginEdit = (block: MarkdownBlock, atEnd = true) => {
+  const beginEdit = (block: MarkdownBlock) => {
     const lines = block.raw.split('\n');
-    moveCaret(
-      atEnd ? block.startLine + lines.length - 1 : block.startLine,
-      atEnd ? lines[lines.length - 1].length : 0
-    );
+    moveCaret(block.startLine + lines.length - 1, lines[lines.length - 1].length);
+  };
+
+  /** Open a block for editing with the caret where the reader pointed. */
+  const beginEditAt = (block: MarkdownBlock, container: HTMLElement, x: number, y: number) => {
+    const shown = renderedTextBeforePoint(container, x, y);
+    if (shown === null) {
+      beginEdit(block);
+      return;
+    }
+    const pos = positionAt(block.raw, sourceOffsetFromRendered(block.raw, shown));
+    moveCaret(block.startLine + pos.line, pos.col);
   };
 
   /** Apply an edit to one block and land the caret where the edit asked. */
@@ -908,7 +981,7 @@ function LiveMarkdownEditor({
             onClick={(e) => {
               const target = e.target as HTMLElement;
               if (target.closest('a, button, input, .checkbox, .attachment-card, .attachment-image')) return;
-              beginEdit(block);
+              beginEditAt(block, e.currentTarget, e.clientX, e.clientY);
             }}
           >
             {renderMarkdown(block.raw, { ...ctx, lineOffset: ctx.lineOffset + block.startLine })}

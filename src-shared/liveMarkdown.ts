@@ -131,16 +131,67 @@ export function positionAt(raw: string, offset: number): { line: number; col: nu
   return { line: before.length - 1, col: before[before.length - 1].length };
 }
 
+const WHITESPACE = /\s/;
+
+/** The bullet, number or checkbox that opens a list line. */
+const LIST_PREFIX = /^(\s*)([-*+]\s+\[[ xX]\]\s+|[-*+]\s+|(\d+)([.)])\s+)/;
+const QUOTE_PREFIX = /^(\s*>\s?)/;
+
+
+/**
+ * Maps a position in a block's *rendered* text back to an offset in its
+ * Markdown source.
+ *
+ * A reader clicks what they can see, and what they can see is the source with
+ * the syntax taken out — so the two are walked in step. Characters that agree
+ * advance both; anything left over in the source is markup the reader never
+ * saw, and is stepped over. Whitespace is treated as equivalent throughout,
+ * because a rendered paragraph joins source lines with a space.
+ *
+ * Where the rendered text is not the source minus syntax — a due date shown as
+ * "May 1" — alignment cannot be exact, so the search for the next agreeing
+ * character is bounded and falls back to the last position that did agree.
+ * Being a few characters out beats landing at the end of the block.
+ */
+export function sourceOffsetFromRendered(raw: string, rendered: string): number {
+  const MAX_MARKUP_RUN = 400;
+  let source = 0;
+  let shown = 0;
+  let agreed = 0;
+
+  while (shown < rendered.length && source < raw.length) {
+    if (WHITESPACE.test(rendered[shown])) {
+      while (shown < rendered.length && WHITESPACE.test(rendered[shown])) shown++;
+      while (source < raw.length && WHITESPACE.test(raw[source])) source++;
+      // Landing at the start of a source line means the marker that opens it —
+      // a bullet, a number, a quote caret — is still ahead. A reader who clicks
+      // the start of a list item means its text, not its bullet.
+      if (source > 0 && raw[source - 1] === '\n') {
+        const rest = raw.slice(source);
+        const marker = LIST_PREFIX.exec(rest)?.[0] ?? QUOTE_PREFIX.exec(rest)?.[1];
+        if (marker) source += marker.length;
+      }
+      agreed = source;
+      continue;
+    }
+    if (raw[source] === rendered[shown]) {
+      source++;
+      shown++;
+      agreed = source;
+      continue;
+    }
+    if (source - agreed > MAX_MARKUP_RUN) return agreed;
+    source++;
+  }
+  return shown >= rendered.length ? agreed : source;
+}
+
 export interface CaretEdit {
   /** Replacement text for the block. */
   raw: string;
   /** Where the caret belongs inside that replacement. */
   caret: number;
 }
-
-/** The bullet, number or checkbox that opens a list line. */
-const LIST_PREFIX = /^(\s*)([-*+]\s+\[[ xX]\]\s+|[-*+]\s+|(\d+)([.)])\s+)/;
-const QUOTE_PREFIX = /^(\s*>\s?)/;
 
 /** The marker that should open the item after this one. */
 function nextMarker(prefix: string): string {
