@@ -51,6 +51,9 @@ it and your Markdown remains untouched.
   insert `> [!github]` for live repository, issue, pull request, release, and workflow
   context. Public repositories need no account; optional GitHub App device login unlocks
   private repositories without exposing tokens to the renderer. See [docs/github.md](docs/github.md).
+- **Built-in extensions** — cross-surface integrations register versioned Markdown components,
+  note properties, editor actions, settings panes, capabilities, and protected main-process
+  providers. Unknown components remain ordinary portable callouts. See [docs/extensions.md](docs/extensions.md).
 - **Pro tabs** — reorder and pin tabs, middle-click to close, or use the context menu to
   close other tabs and tabs to the right.
 - **Encrypted sync** — pair a second device and your vault follows, through
@@ -100,6 +103,9 @@ Repo layout:
 - `src-main/` — Electron main process: vault manager (scan, watch, index, tasks,
   backlinks, graph layout), IPC, window.
 - `src/` — renderer: React + plain CSS design tokens (no CSS framework).
+- `src/extensions/` — trusted renderer extension manifests and contributions.
+- `src-main/extensionRegistry.ts` and `src-main/extensions.ts` — protected extension provider
+  contracts, built-ins, and IPC registration.
 - `src-shared/` — pure logic shared by both: frontmatter, tasks, wikilinks, full-text search,
   tags, sync protocol, and merge rules.
 - `tools/` — release tooling and the screenshot driver.

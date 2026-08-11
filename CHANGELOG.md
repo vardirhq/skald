@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added a versioned built-in extension registry for Markdown components, note properties,
+  editor insertion actions, Settings panes, and protected main-process providers. Extensions
+  declare platforms and capabilities, registration rejects contribution collisions, and an
+  Extensions pane shows what is installed. GitHub now uses this contract end to end instead of
+  being hardcoded into the Markdown renderer and editor. Unknown components continue to render
+  as portable callouts. See `docs/extensions.md`.
+
 - Added GitHub repository bindings and insertable live repository cards. Notes store a
   portable `github: owner/repo` property, while `> [!github]` embeds repository metadata,
   issue and pull-request counts, releases, and workflow state. Public repositories work

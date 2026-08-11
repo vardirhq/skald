@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { Vault } from './vault';
 import { SyncEngine } from './sync';
-import { GitHubService } from './github';
+import { mainExtensionRegistry } from './extensions';
 import { loadAppConfig, saveAppConfig } from './config';
 import type { VaultSettings } from '../src-shared/types';
 import type { TaskEdits } from '../src-shared/tasks';
@@ -14,7 +14,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let vault: Vault | null = null;
 let sync: SyncEngine | null = null;
-const github = new GitHubService();
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'skald-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -240,7 +239,7 @@ function registerIpc() {
   // Sync is the one surface that talks to a machine we do not control, so a
   // failure here gets logged where a person running the app can see it as well
   // as returned to the renderer. A rejected invoke on its own leaves no trace.
-  const syncHandle = <A extends unknown[], R>(
+  const safeHandle = <A extends unknown[], R>(
     channel: string,
     handler: (...args: A) => R | Promise<R>
   ): void => {
@@ -254,30 +253,22 @@ function registerIpc() {
     });
   };
 
-  syncHandle('sync:status', () => requireSync().status());
-  syncHandle('sync:connect', (input: { serverUrl: string; handle?: string; provisioningSecret?: string }) =>
+  safeHandle('sync:status', () => requireSync().status());
+  safeHandle('sync:connect', (input: { serverUrl: string; handle?: string; provisioningSecret?: string }) =>
     requireSync().connect(input)
   );
-  syncHandle('sync:pair', (uri: string) => requireSync().pair(uri));
-  syncHandle('sync:mintPairing', () => requireSync().mintPairing());
-  syncHandle('sync:devices', () => requireSync().listDevices());
-  syncHandle('sync:revoke', (deviceId: string) => requireSync().revokeDevice(deviceId));
-  syncHandle('sync:now', () => requireSync().syncNow());
-  syncHandle('sync:snapshot', () => requireSync().pushSnapshot());
-  syncHandle('sync:setEnabled', (enabled: boolean) => requireSync().setEnabled(enabled));
-  syncHandle('sync:disconnect', () => requireSync().disconnect());
+  safeHandle('sync:pair', (uri: string) => requireSync().pair(uri));
+  safeHandle('sync:mintPairing', () => requireSync().mintPairing());
+  safeHandle('sync:devices', () => requireSync().listDevices());
+  safeHandle('sync:revoke', (deviceId: string) => requireSync().revokeDevice(deviceId));
+  safeHandle('sync:now', () => requireSync().syncNow());
+  safeHandle('sync:snapshot', () => requireSync().pushSnapshot());
+  safeHandle('sync:setEnabled', (enabled: boolean) => requireSync().setEnabled(enabled));
+  safeHandle('sync:disconnect', () => requireSync().disconnect());
 
-  // ----- GitHub -----
-  // Access tokens stay behind this boundary. The renderer only receives
-  // connection state and the small, normalized repository-card model.
-  syncHandle('github:status', () => github.status());
-  syncHandle('github:login:begin', () => github.beginLogin());
-  syncHandle('github:login:complete', () => github.completeLogin());
-  syncHandle('github:login:cancel', () => github.cancelLogin());
-  syncHandle('github:disconnect', () => github.disconnect());
-  syncHandle('github:repository', (repo: string, force?: boolean) =>
-    github.repository(repo, force)
-  );
+  // Built-in extensions register only declared channels through the same
+  // logged boundary. Tokens and provider objects never reach the renderer.
+  mainExtensionRegistry.register((channel, handler) => safeHandle(channel, handler));
 
   // ----- window controls -----
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());

@@ -1,5 +1,9 @@
 # GitHub repository cards
 
+GitHub ships as Skald's first built-in extension. Its portable Markdown contract works even on
+clients that only provide a fallback renderer; see [extensions.md](extensions.md) for the registry
+and security model.
+
 Skald notes can bind to one GitHub repository with portable frontmatter:
 
 ```yaml

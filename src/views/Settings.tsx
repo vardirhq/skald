@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import type {
-  GitHubAuthStatus,
-  GitHubDeviceLogin,
   SchemaName,
   VaultSnapshot,
   VaultSettings,
@@ -13,8 +11,10 @@ import { api } from '../api';
 import { useStore } from '../store';
 import { allFolderPaths } from '../chrome/Sidebar';
 import { SyncPane } from './SyncPane';
+import { extensionRegistry } from '../extensions/registry';
 
-type Pane = 'appearance' | 'themes' | 'editor' | 'schemas' | 'vault' | 'sync' | 'github' | 'shortcuts';
+type BuiltinPane = 'appearance' | 'themes' | 'editor' | 'schemas' | 'vault' | 'sync' | 'extensions' | 'shortcuts';
+type Pane = BuiltinPane | `extension:${string}`;
 
 const SCHEMA_DESC: Record<string, string> = {
   Note: 'Catch-all note.',
@@ -31,6 +31,8 @@ export function SettingsView({ snapshot }: { snapshot: VaultSnapshot }) {
   const [pane, setPane] = useState<Pane>('appearance');
   const s = snapshot.settings;
   const set = (patch: Partial<VaultSettings>) => void api.setSettings(patch);
+  const extensionPane = extensionRegistry.settingsPanes.find((item) => item.id === pane);
+  const ExtensionPane = extensionPane?.component;
 
   return (
     <div className="settings">
@@ -42,8 +44,9 @@ export function SettingsView({ snapshot }: { snapshot: VaultSnapshot }) {
         {pane === 'schemas' && <SchemasPane snapshot={snapshot} s={s} set={set} />}
         {pane === 'vault' && <VaultPane snapshot={snapshot} s={s} set={set} />}
         {pane === 'sync' && <SyncPane />}
-        {pane === 'github' && <GitHubPane />}
+        {pane === 'extensions' && <ExtensionsPane />}
         {pane === 'shortcuts' && <ShortcutsPane />}
+        {ExtensionPane && <ExtensionPane />}
       </div>
     </div>
   );
@@ -60,8 +63,9 @@ function SettingsNav({ pane, setPane }: { pane: Pane; setPane: (p: Pane) => void
     { group: 'vault' },
     { id: 'vault', label: 'Vault', schema: 'Place' },
     { id: 'sync', label: 'Sync', schema: 'Person' },
-    { group: 'connections' },
-    { id: 'github', label: 'GitHub', schema: 'Project' },
+    ...settingsExtensionNavItems(),
+    { group: 'system' },
+    { id: 'extensions', label: 'Extensions', schema: 'Source' },
     { id: 'shortcuts', label: 'Shortcuts', schema: 'Daily' },
   ];
   return (
@@ -82,6 +86,19 @@ function SettingsNav({ pane, setPane }: { pane: Pane; setPane: (p: Pane) => void
       )}
     </nav>
   );
+}
+
+function settingsExtensionNavItems(): ({ group: string } | { id: Pane; label: string; schema: string })[] {
+  const items: ({ group: string } | { id: Pane; label: string; schema: string })[] = [];
+  let group: string | null = null;
+  for (const pane of extensionRegistry.settingsPanes) {
+    if (pane.group !== group) {
+      group = pane.group;
+      items.push({ group });
+    }
+    items.push({ id: pane.id, label: pane.label, schema: pane.schema });
+  }
+  return items;
 }
 
 function Row({
@@ -417,108 +434,6 @@ function AttachmentFolderSetting({
   );
 }
 
-function GitHubPane() {
-  const [status, setStatus] = useState<GitHubAuthStatus | null>(null);
-  const [device, setDevice] = useState<GitHubDeviceLogin | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void api.githubStatus().then(setStatus).catch((err) => setError(String(err)));
-    return () => { void api.githubCancelLogin(); };
-  }, []);
-
-  const connect = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const login = await api.githubBeginLogin();
-      setDevice(login);
-      window.open(login.verificationUri);
-      const next = await api.githubCompleteLogin();
-      setStatus(next);
-      setDevice(null);
-    } catch (err) {
-      const message = String((err as Error).message ?? err);
-      if (!/cancelled/i.test(message)) setError(message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const cancel = () => {
-    void api.githubCancelLogin();
-    setDevice(null);
-    setBusy(false);
-  };
-
-  return (
-    <>
-      <h1 className="settings__title">GitHub</h1>
-      <p className="settings__lede">
-        Repository cards work for public repositories without an account. Connect GitHub only to
-        read repositories your GitHub App installation can access.
-      </p>
-
-      <Row
-        title="Connection"
-        desc={status?.connected ? `Signed in as @${status.login ?? 'GitHub user'}. Tokens stay encrypted in your OS keyring.` : 'Optional. Skald requests read-only repository access.'}
-      >
-        <div className="github-settings__actions">
-          {status?.connected ? (
-            <>
-              <span className="github-settings__identity">@{status.login ?? 'connected'}</span>
-              <button className="btn" onClick={() => void api.githubDisconnect().then(setStatus)}>Disconnect</button>
-            </>
-          ) : (
-            <button
-              className="btn btn--accent"
-              disabled={busy || !status?.configured || !status?.secretsProtected}
-              onClick={() => void connect()}
-            >
-              {busy ? 'Waiting for GitHub…' : 'Connect GitHub'}
-            </button>
-          )}
-        </div>
-      </Row>
-
-      {device && (
-        <div className="github-device-login">
-          <div>
-            <strong>Enter this code on GitHub</strong>
-            <code>{device.userCode}</code>
-            <span>The GitHub device page opened in your browser.</span>
-          </div>
-          <div>
-            <button className="btn" onClick={() => window.open(device.verificationUri)}>Open GitHub</button>
-            <button className="btn btn--ghost" onClick={cancel}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {status && !status.configured && (
-        <div className="settings__notice">
-          Private-repository login is not configured in this build. Set
-          <code>SKALD_GITHUB_CLIENT_ID</code> and <code>SKALD_GITHUB_APP_SLUG</code> when building;
-          public repository cards still work.
-        </div>
-      )}
-      {status && !status.secretsProtected && (
-        <div className="settings__notice settings__notice--warn">
-          Unlock your OS keyring before connecting. Skald will not save a GitHub token without encrypted storage.
-        </div>
-      )}
-      {error && <div className="settings__notice settings__notice--warn">{error}</div>}
-
-      {status?.connected && status.installUrl && (
-        <Row title="Repository access" desc="Add or remove private repositories from this GitHub App installation.">
-          <button className="btn" onClick={() => window.open(status.installUrl!)}>Manage on GitHub ↗</button>
-        </Row>
-      )}
-    </>
-  );
-}
-
 function ShortcutsPane() {
   return (
     <>
@@ -542,6 +457,44 @@ function ShortcutsPane() {
             <span style={{ fontSize: 13.5, color: 'var(--tx-1)' }}>{l}</span>
           </div>
         ))}
+      </div>
+    </>
+  );
+}
+
+function ExtensionsPane() {
+  return (
+    <>
+      <h1 className="settings__title">Extensions</h1>
+      <p className="settings__lede">
+        Trusted integrations bundled with Skald. Extensions declare every surface and capability they use;
+        downloaded third-party code is not enabled.
+      </p>
+      <div className="extension-list">
+        {extensionRegistry.extensions.map((extension) => {
+          const contributions = [
+            extension.markdownComponents?.length ? `${extension.markdownComponents.length} component` : null,
+            extension.noteProperties?.length ? `${extension.noteProperties.length} property` : null,
+            extension.editorInsertions?.length ? `${extension.editorInsertions.length} editor action` : null,
+            extension.settingsPanes?.length ? `${extension.settingsPanes.length} settings pane` : null,
+          ].filter(Boolean).join(' · ');
+          return (
+            <article key={extension.manifest.id} className="extension-card">
+              <div className="extension-card__head">
+                <div>
+                  <strong>{extension.manifest.name}</strong>
+                  <code>{extension.manifest.id}</code>
+                </div>
+                <span>built in · v{extension.manifest.version}</span>
+              </div>
+              <p>{extension.manifest.description}</p>
+              <div className="extension-card__meta">{contributions || 'No renderer contributions'}</div>
+              <div className="extension-card__capabilities">
+                {(extension.manifest.capabilities.desktop ?? []).map((capability) => <span key={capability}>{capability}</span>)}
+              </div>
+            </article>
+          );
+        })}
       </div>
     </>
   );
