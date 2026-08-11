@@ -547,11 +547,11 @@ describe('setup failures are reported, not swallowed', () => {
     const a = await makeDevice();
     gesh.failWhen = (method, path) => (method === 'POST' && path === '/v1/roots' ? 401 : null);
     await expect(a.engine.connect({ serverUrl: 'https://relay.test' })).rejects.toThrow(
-      /did not accept this credential/
+      /provisioning secret/
     );
     gesh.failWhen = null;
     expect(a.engine.status().configured).toBe(false);
-    expect(a.engine.status().lastError).toMatch(/did not accept this credential/);
+    expect(a.engine.status().lastError).toMatch(/provisioning secret/);
   });
 
   it('refuses a relay address that is not a URL, before any request', async () => {

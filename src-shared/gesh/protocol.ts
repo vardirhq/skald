@@ -83,8 +83,14 @@ export class GeshError extends Error {
   readonly retryAfterMs: number | null;
   readonly detail: string;
 
-  constructor(status: number, detail: string, retryAfterMs: number | null = null) {
-    super(messageFor(status, detail));
+  constructor(
+    status: number,
+    detail: string,
+    retryAfterMs: number | null = null,
+    /** Overrides the status's stock wording where the caller knows better. */
+    message?: string
+  ) {
+    super(message ?? messageFor(status, detail));
     this.name = 'GeshError';
     this.status = status;
     this.detail = detail;
@@ -260,12 +266,29 @@ export class GeshClient {
     assertIdentifier('A device id', input.deviceId);
     if (input.handle !== undefined) assertHandle(input.handle);
 
-    const { json } = await this.request('POST', '/v1/roots', {
-      token: input.provisioningSecret,
-      json: input.handle
-        ? { appId: input.appId, deviceId: input.deviceId, handle: input.handle }
-        : { appId: input.appId, deviceId: input.deviceId },
-    });
+    let json: unknown;
+    try {
+      ({ json } = await this.request('POST', '/v1/roots', {
+        token: input.provisioningSecret,
+        json: input.handle
+          ? { appId: input.appId, deviceId: input.deviceId, handle: input.handle }
+          : { appId: input.appId, deviceId: input.deviceId },
+      }));
+    } catch (err) {
+      // The generic 401 text is about device credentials and pairing codes,
+      // neither of which exists yet here. This relay is closed to the public.
+      if (err instanceof GeshError && err.status === 401) {
+        throw new GeshError(
+          401,
+          err.detail,
+          null,
+          input.provisioningSecret
+            ? 'The relay rejected that provisioning secret'
+            : 'This relay only creates sync roots for callers holding its provisioning secret'
+        );
+      }
+      throw err;
+    }
     const body = (json ?? {}) as Record<string, unknown>;
     return {
       appId: str(body['app_id'], 'app_id'),

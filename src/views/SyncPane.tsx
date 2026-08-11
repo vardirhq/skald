@@ -101,6 +101,7 @@ function SetupPanes({
   const busy = pending !== null;
   const [serverUrl, setServerUrl] = useState('https://gesh.vardir.no');
   const [handle, setHandle] = useState('');
+  const [provisioningSecret, setProvisioningSecret] = useState('');
   const [pairingUri, setPairingUri] = useState('');
 
   return (
@@ -134,6 +135,17 @@ function SetupPanes({
               onChange={(e) => setHandle(e.target.value)}
             />
           </label>
+          <label className="sync-field">
+            <span>Provisioning secret (if the relay asks for one)</span>
+            <input
+              className="settings__text-input"
+              type="password"
+              value={provisioningSecret}
+              spellCheck={false}
+              placeholder="Leave empty for an open relay"
+              onChange={(e) => setProvisioningSecret(e.target.value)}
+            />
+          </label>
           <button
             className="btn btn--accent"
             disabled={busy || !serverUrl.trim()}
@@ -144,6 +156,7 @@ function SetupPanes({
                   api.syncConnect({
                     serverUrl: serverUrl.trim(),
                     ...(handle.trim() ? { handle: handle.trim() } : {}),
+                    ...(provisioningSecret ? { provisioningSecret } : {}),
                   }),
                 applyStatus
               )
