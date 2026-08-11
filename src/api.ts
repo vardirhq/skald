@@ -49,6 +49,7 @@ export const api = {
   createVault: (path: string) => bridge().invoke('vault:create', path) as Promise<VaultSnapshot>,
   snapshot: () => bridge().invoke('vault:snapshot') as Promise<VaultSnapshot>,
   revealInFolder: (sub?: string) => bridge().invoke('vault:revealInFolder', sub) as Promise<void>,
+  showItemInFolder: (path: string) => bridge().invoke('vault:showItem', path) as Promise<void>,
 
   // notes
   readNote: (path: string) => bridge().invoke('note:read', path) as Promise<NotePayload>,

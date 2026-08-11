@@ -74,6 +74,21 @@ const PATHS: Record<string, ReactNode> = {
     </>
   ),
   x: <path d="m6 6 12 12M18 6 6 18" />,
+  copy: (
+    <>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3" />
+    </>
+  ),
+  // Chevrons pushing apart / pulling together — unfold and fold.
+  expand: <path d="m8 9 4-4 4 4M8 15l4 4 4-4" />,
+  collapse: <path d="m8 5 4 4 4-4M8 19l4-4 4 4" />,
+  focus: (
+    <>
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3" />
+    </>
+  ),
   calendarPlus: (
     <>
       <rect x="3.5" y="5" width="17" height="15.5" rx="2" />

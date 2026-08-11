@@ -148,6 +148,11 @@ function registerIpc() {
     const v = requireVault();
     shell.openPath(sub ? join(v.path, sub) : v.path);
   });
+  // Opening a note's own folder with the file selected, rather than handing the
+  // Markdown file to whatever the desktop thinks should edit it.
+  ipcMain.handle('vault:showItem', (_e, path: string) => {
+    shell.showItemInFolder(requireVault().resolveVaultFile(path));
+  });
 
   // ----- notes -----
   ipcMain.handle('note:read', (_e, path: string) => requireVault().readNote(path));
