@@ -175,9 +175,13 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .tree__special-meta { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--tx-3); }
 .tree__special:hover, .tree__folder-row:hover, .tree__row:hover:not(.no-hover) { background: var(--bg-3); }
 .tree__special.is-active, .tree__row.is-active { background: var(--ac-ghost); color: var(--tx-0); }
+.tree__row.is-selected { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ac) 42%, transparent); }
+.tree__row.is-selected:not(.is-active) { background: color-mix(in oklab, var(--ac-ghost) 72%, transparent); }
 .tree__row.is-active .tree__label { color: var(--tx-0); }
 /* the row whose context menu is open */
 .tree__row.is-menu, .tree__folder-row.is-menu { background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-2); }
+.tree__folder-row.is-drop { background: var(--ac-ghost); box-shadow: inset 0 0 0 1px var(--ac); }
+.tree--explorer.is-drop-root { box-shadow: inset 0 0 0 1px var(--ac); border-radius: var(--r-1); }
 
 .tree__divider { height: 1px; background: var(--line); margin: 8px 8px; }
 .tree__group-label {
@@ -196,6 +200,11 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .mono-row { font-size: 12.5px; }
 .tree__statusdot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 .tree__footer { padding: 12px 8px 4px; font-family: var(--font-mono); font-size: 10px; color: var(--tx-4); }
+.saved-search { position: relative; }
+.saved-search .tree__row { padding-right: 28px; }
+.saved-search__remove { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: var(--tx-4); opacity: 0; }
+.saved-search:hover .saved-search__remove { opacity: 1; }
+.saved-search__remove:hover { color: var(--err); }
 
 /* ============================ MAIN REGION ============================ */
 .main {
@@ -219,6 +228,8 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
   position: relative; max-width: 230px;
 }
 .tab:hover { background: var(--bg-2); color: var(--tx-1); }
+.tab.is-drop { box-shadow: inset 2px 0 0 var(--ac); }
+.tab.is-pinned { max-width: 170px; background: color-mix(in oklab, var(--bg-1) 78%, var(--ac-ghost)); }
 .tab.is-active { background: var(--bg-2); color: var(--tx-0); }
 .tab.is-active::before {
   content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--ac);
@@ -227,6 +238,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .tab__glyph { font-family: var(--font-mono); color: var(--tx-2); }
 .tab__label { overflow: hidden; text-overflow: ellipsis; }
 .tab__dirty { width: 7px; height: 7px; border-radius: 50%; background: var(--tx-2); flex: 0 0 auto; }
+.tab__pin { color: var(--ac); font-size: 7px; margin-left: 2px; }
 .tab__close {
   display: inline-flex; padding: 2px; margin-left: 1px; border: none; background: transparent;
   color: var(--tx-3); border-radius: 3px; opacity: 0; transition: opacity var(--fast), background var(--fast);

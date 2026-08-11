@@ -9,6 +9,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added safe note and folder management inside Skald: move one or many notes, rename or
+  move complete folders, and delete folders recursively. Drag-and-drop targets the same
+  operations. Moves are validated as a batch and rewrite wikilinks against the original
+  vault index, so duplicate note names cannot make a halfway-completed move target the
+  wrong file. Histories, graph positions, pinned notes, and open tabs follow changed paths.
+- Added explorer multi-selection with Shift and Ctrl/Command click. Open, move, delete,
+  copy wikilinks, and copy paths act on the selection. Arrow keys navigate visible rows,
+  Left/Right fold folders, Space selects notes, and type-ahead focuses matching rows.
+- Added tab reordering, pinning, middle-click close, and context actions for Close others
+  and Close to the right. Pinned tabs stay grouped on the left and survive bulk closing.
+- Added full-text search over indexed note bodies, titles, and paths, with ranked snippets,
+  exact line locations, quoted terms, and `schema:`, `tag:`, and `folder:` filters. Results
+  open at the match, and saved searches can be pinned in the search sidebar.
+- Added Recently deleted. The deletion snapshots Skald was already retaining are now
+  listed and can be restored to their original paths, including notes deleted with a folder.
+- Added tag browsing for frontmatter, inline, and task tags, plus keyboard-selectable
+  `#tag` completion in both the live block editor and source editor.
+- Added editable per-schema note templates in Settings. `{{title}}` and `{{date}}`
+  placeholders are expanded when a note is created, while Skald continues to own the
+  required schema and creation frontmatter.
+
 - Added explorer context menus that know what they are pointing at. Right-clicking a
   folder can expand or collapse its subfolders, collapse everything else in the vault so
   one branch stands alone, open every note it holds, and copy its notes as a list of

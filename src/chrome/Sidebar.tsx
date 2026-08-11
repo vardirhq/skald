@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FolderNode, NoteMeta, VaultSnapshot } from '../../src-shared/types';
 import { Icon } from '../ui/icons';
 import { Rune, schemaTone } from '../ui/runes';
 import { ContextMenu, ctxItems, useContextMenu, CTX_SEP, type CtxItem } from '../ui/contextMenu';
-import { NewNoteDialog, TextDialog, ConfirmDialog } from '../ui/dialogs';
+import { NewNoteDialog, TextDialog, ConfirmDialog, FolderDialog } from '../ui/dialogs';
 import { copyText } from '../ui/clipboard';
 import { api } from '../api';
 import { useStore, todayISO } from '../store';
@@ -16,8 +16,10 @@ import {
   folderNotePaths,
   isFolderOpen,
   isolatePatch,
+  parentFolderPath,
   someCollapsed,
   someExpanded,
+  visibleTreeItems,
 } from './tree';
 
 type DialogState =
@@ -25,6 +27,11 @@ type DialogState =
   | { kind: 'new-folder'; parent?: string }
   | { kind: 'rename'; path: string; title: string }
   | { kind: 'delete'; path: string; title: string }
+  | { kind: 'delete-many'; paths: string[] }
+  | { kind: 'move-notes'; paths: string[] }
+  | { kind: 'rename-folder'; path: string; name: string }
+  | { kind: 'move-folder'; path: string }
+  | { kind: 'delete-folder'; path: string; name: string; notes: number }
   | { kind: 'open-many'; paths: string[]; where: string }
   | null;
 
@@ -40,6 +47,7 @@ export function Sidebar() {
     explorer: 'Explorer',
     tasks: 'Tasks',
     graph: 'Graph',
+    search: 'Search',
     settings: 'Settings',
   };
   return (
@@ -50,6 +58,7 @@ export function Sidebar() {
         {activity === 'explorer' && <ExplorerTree snapshot={snapshot} />}
         {activity === 'tasks' && <TaskSidebar snapshot={snapshot} />}
         {activity === 'graph' && <GraphSidebar snapshot={snapshot} />}
+        {activity === 'search' && <SearchSidebar snapshot={snapshot} />}
         {activity === 'settings' && (
           <div className="sidebar__hint">Settings open in the main view.</div>
         )}
@@ -147,6 +156,31 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
   const notePathRenamed = useStore((s) => s.notePathRenamed);
   const showToast = useStore((s) => s.showToast);
   const pinned = snapshot.settings.pinnedNote;
+  const pathsChanged = useStore((s) => s.pathsChanged);
+  const [selectedNotes, setSelectedNotes] = useState<Set<string>>(() => new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
+  const [cursorKey, setCursorKey] = useState<string | null>(selectedPath);
+  const [dragging, setDragging] = useState<{ kind: 'note' | 'folder'; path: string } | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const typeahead = useRef({ value: '', at: 0 });
+
+  const visibleItems = useMemo(
+    () => visibleTreeItems(snapshot.tree, folderOpen, new Map(snapshot.notes.map((n) => [n.path, n.title]))),
+    [snapshot.tree, snapshot.notes, folderOpen]
+  );
+  const visibleNotePaths = useMemo(
+    () => visibleItems.filter((item) => item.kind === 'note').map((item) => item.path),
+    [visibleItems]
+  );
+
+  useEffect(() => {
+    const alive = new Set(snapshot.notes.map((note) => note.path));
+    setSelectedNotes((current) => {
+      const next = new Set([...current].filter((path) => alive.has(path)));
+      return next.size === current.size ? current : next;
+    });
+  }, [snapshot.notes]);
 
   const isOpen = (path: string) => isFolderOpen(folderOpen, path);
 
@@ -160,6 +194,111 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
     close();
   };
 
+  const selectNote = (path: string, event: Pick<React.MouseEvent, 'shiftKey' | 'metaKey' | 'ctrlKey'>) => {
+    if (event.shiftKey && selectionAnchor) {
+      const a = visibleNotePaths.indexOf(selectionAnchor);
+      const b = visibleNotePaths.indexOf(path);
+      if (a !== -1 && b !== -1) {
+        const [from, to] = a < b ? [a, b] : [b, a];
+        setSelectedNotes(new Set(visibleNotePaths.slice(from, to + 1)));
+      }
+    } else if (event.metaKey || event.ctrlKey) {
+      setSelectedNotes((current) => {
+        const next = new Set(current);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        return next;
+      });
+      setSelectionAnchor(path);
+    } else {
+      setSelectedNotes(new Set([path]));
+      setSelectionAnchor(path);
+      openNote(path);
+    }
+    setCursorKey(path);
+  };
+
+  const selectionFor = (path: string): string[] =>
+    selectedNotes.has(path) && selectedNotes.size > 1 ? [...selectedNotes] : [path];
+
+  const focusTreeRow = (path: string) => {
+    setCursorKey(path);
+    requestAnimationFrame(() => {
+      const rows = treeRef.current?.querySelectorAll<HTMLElement>('[data-tree-key]');
+      [...(rows ?? [])].find((row) => row.dataset.treeKey === path)?.focus();
+    });
+  };
+
+  const onTreeKeyDown = (event: React.KeyboardEvent) => {
+    if (!visibleItems.length || event.altKey || event.metaKey || event.ctrlKey) return;
+    const current = Math.max(0, visibleItems.findIndex((item) => item.path === cursorKey));
+    const item = visibleItems[current];
+    let next = current;
+    if (event.key === 'ArrowDown') next = Math.min(visibleItems.length - 1, current + 1);
+    else if (event.key === 'ArrowUp') next = Math.max(0, current - 1);
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = visibleItems.length - 1;
+    else if (event.key === 'ArrowRight' && item.kind === 'folder') {
+      if (!isOpen(item.path)) toggleFolder(item.path);
+      else next = Math.min(visibleItems.length - 1, current + 1);
+    } else if (event.key === 'ArrowLeft') {
+      if (item.kind === 'folder' && isOpen(item.path)) toggleFolder(item.path);
+      else {
+        const parent = parentFolderPath(item.path);
+        const parentIndex = visibleItems.findIndex((candidate) => candidate.path === parent);
+        if (parentIndex !== -1) next = parentIndex;
+      }
+    } else if (event.key === 'Enter') {
+      if (item.kind === 'folder') toggleFolder(item.path);
+      else openNote(item.path);
+    } else if (event.key === ' ' && item.kind === 'note') {
+      setSelectedNotes((currentSelection) => {
+        const selected = new Set(currentSelection);
+        if (selected.has(item.path)) selected.delete(item.path);
+        else selected.add(item.path);
+        return selected;
+      });
+      setSelectionAnchor(item.path);
+    } else if (event.key.length === 1 && /\S/.test(event.key)) {
+      const now = Date.now();
+      typeahead.current.value =
+        now - typeahead.current.at < 700
+          ? typeahead.current.value + event.key.toLocaleLowerCase()
+          : event.key.toLocaleLowerCase();
+      typeahead.current.at = now;
+      const query = typeahead.current.value;
+      const ordered = [...visibleItems.slice(current + 1), ...visibleItems.slice(0, current + 1)];
+      const hit = ordered.find((candidate) => candidate.label.toLocaleLowerCase().startsWith(query));
+      if (hit) focusTreeRow(hit.path);
+      event.preventDefault();
+      return;
+    } else return;
+    event.preventDefault();
+    if (next !== current) focusTreeRow(visibleItems[next].path);
+  };
+
+  const dropInto = async (folder: string) => {
+    if (!dragging) return;
+    try {
+      if (dragging.kind === 'folder') {
+        const changes = await api.moveFolder(dragging.path, folder);
+        pathsChanged(changes);
+      } else {
+        const paths = selectedNotes.has(dragging.path) ? [...selectedNotes] : [dragging.path];
+        const changes = await api.moveNotes(paths, folder);
+        pathsChanged(changes);
+        const moved = new Map(changes.map((change) => [change.oldPath, change.newPath]));
+        setSelectedNotes(new Set(paths.map((path) => moved.get(path) ?? path)));
+      }
+      showToast(`Moved to ${folder || 'vault root'}`);
+    } catch (err) {
+      showToast(String((err as Error).message ?? err));
+    } finally {
+      setDragging(null);
+      setDropTarget(null);
+    }
+  };
+
   /** Opens a folder's notes, asking first when that would flood the tab strip. */
   const openFolderNotes = (node: FolderNode) => {
     const paths = folderNotePaths(node);
@@ -170,40 +309,70 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
     }
   };
 
-  const noteMenu = (n: NoteMeta): CtxItem[] =>
-    ctxItems(
-      { label: 'Open', icon: 'files', onClick: () => openNote(n.path) },
+  const noteMenu = (n: NoteMeta, forceSingle = false): CtxItem[] => {
+    const paths = forceSingle ? [n.path] : selectionFor(n.path);
+    const selected = paths.map((path) => notesByPath.get(path)).filter((note): note is NoteMeta => !!note);
+    const many = paths.length > 1;
+    return ctxItems(
+      {
+        label: many ? `Open ${paths.length} selected` : 'Open',
+        icon: 'files',
+        onClick: () => (many ? openNotes(paths) : openNote(n.path)),
+      },
       {
         label: 'Reveal in file manager',
         icon: 'external',
+        disabled: many,
         onClick: () => void api.showItemInFolder(n.path),
       },
       CTX_SEP,
       {
-        label: 'Copy wikilink',
+        label: many ? `Copy ${paths.length} wikilinks` : 'Copy wikilink',
         icon: 'copy',
-        onClick: () => copyText(`[[${n.title}]]`, 'Wikilink', showToast),
+        onClick: () =>
+          copyText(
+            selected.map((note) => `[[${note.title}]]`).join('\n'),
+            many ? `${paths.length} wikilinks` : 'Wikilink',
+            showToast
+          ),
       },
-      { label: 'Copy path', icon: 'copy', onClick: () => copyText(n.path, 'Path', showToast) },
+      {
+        label: many ? `Copy ${paths.length} paths` : 'Copy path',
+        icon: 'copy',
+        onClick: () => copyText(paths.join('\n'), many ? `${paths.length} paths` : 'Path', showToast),
+      },
       CTX_SEP,
       {
         label: 'Rename…',
         icon: 'edit',
+        disabled: many,
         onClick: () => setDialog({ kind: 'rename', path: n.path, title: n.title }),
+      },
+      {
+        label: many ? `Move ${paths.length} notes…` : 'Move to…',
+        icon: 'folder',
+        onClick: () => setDialog({ kind: 'move-notes', paths }),
       },
       {
         label: pinned === n.path ? 'Unpin from logbook' : 'Pin to logbook',
         icon: 'pin',
+        disabled: many,
         onClick: () => void api.setSettings({ pinnedNote: pinned === n.path ? null : n.path }),
       },
       CTX_SEP,
       {
-        label: 'Delete…',
+        label: many ? `Delete ${paths.length} notes…` : 'Delete…',
         icon: 'trash',
         danger: true,
-        onClick: () => setDialog({ kind: 'delete', path: n.path, title: n.title }),
+        onClick: () =>
+          setDialog(
+            many
+              ? { kind: 'delete-many', paths }
+              : { kind: 'delete', path: n.path, title: n.title }
+          ),
       }
     );
+  };
 
   const folderMenu = (node: FolderNode): CtxItem[] => {
     const subfolders = descendantFolderPaths(node);
@@ -270,6 +439,23 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
         label: 'Reveal in file manager',
         icon: 'external',
         onClick: () => void api.revealInFolder(node.path),
+      },
+      CTX_SEP,
+      {
+        label: 'Rename folder…',
+        icon: 'edit',
+        onClick: () => setDialog({ kind: 'rename-folder', path: node.path, name: node.name }),
+      },
+      {
+        label: 'Move folder…',
+        icon: 'folder',
+        onClick: () => setDialog({ kind: 'move-folder', path: node.path }),
+      },
+      {
+        label: 'Delete folder…',
+        icon: 'trash',
+        danger: true,
+        onClick: () => setDialog({ kind: 'delete-folder', path: node.path, name: node.name, notes }),
       }
     );
   };
@@ -304,13 +490,33 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
     return (
       <button
         key={path}
+        data-tree-key={path}
+        tabIndex={cursorKey === path ? 0 : -1}
+        draggable
         className={
           'tree__row' +
           (selectedPath === path && view === 'editor' ? ' is-active' : '') +
+          (selectedNotes.has(path) ? ' is-selected' : '') +
           (menuTarget === path ? ' is-menu' : '')
         }
-        onClick={() => openNote(path)}
-        onContextMenu={(e) => openMenu(e, path, noteMenu(n))}
+        onClick={(e) => selectNote(path, e)}
+        onFocus={() => setCursorKey(path)}
+        onDragStart={(e) => {
+          setDragging({ kind: 'note', path });
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', path);
+        }}
+        onDragEnd={() => {
+          setDragging(null);
+          setDropTarget(null);
+        }}
+        onContextMenu={(e) => {
+          if (!selectedNotes.has(path)) {
+            setSelectedNotes(new Set([path]));
+            setSelectionAnchor(path);
+          }
+          openMenu(e, path, noteMenu(n, !selectedNotes.has(path)));
+        }}
         title={path}
       >
         <span className="tree__rune" style={{ color: schemaTone(n.schema) }}>
@@ -324,9 +530,43 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
   const renderFolder = (node: FolderNode) => (
     <div key={node.path} className="tree__folder">
       <button
-        className={'tree__folder-row' + (menuTarget === node.path ? ' is-menu' : '')}
+        data-tree-key={node.path}
+        tabIndex={cursorKey === node.path ? 0 : -1}
+        draggable
+        className={
+          'tree__folder-row' +
+          (menuTarget === node.path ? ' is-menu' : '') +
+          (dropTarget === node.path ? ' is-drop' : '')
+        }
         aria-expanded={isOpen(node.path)}
-        onClick={() => toggleFolder(node.path)}
+        onClick={() => {
+          setCursorKey(node.path);
+          setSelectedNotes(new Set());
+          toggleFolder(node.path);
+        }}
+        onFocus={() => setCursorKey(node.path)}
+        onDragStart={(e) => {
+          e.stopPropagation();
+          setDragging({ kind: 'folder', path: node.path });
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', node.path);
+        }}
+        onDragOver={(e) => {
+          if (!dragging || dragging.path === node.path) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setDropTarget(node.path);
+        }}
+        onDragLeave={() => setDropTarget((target) => (target === node.path ? null : target))}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void dropInto(node.path);
+        }}
+        onDragEnd={() => {
+          setDragging(null);
+          setDropTarget(null);
+        }}
         onContextMenu={(e) => openMenu(e, node.path, folderMenu(node))}
         title={node.path}
       >
@@ -346,7 +586,23 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
   );
 
   return (
-    <div className="tree tree--explorer" onContextMenu={(e) => openMenu(e, null, treeMenu())}>
+    <div
+      ref={treeRef}
+      className={'tree tree--explorer' + (dropTarget === '' ? ' is-drop-root' : '')}
+      role="tree"
+      onKeyDown={onTreeKeyDown}
+      onDragOver={(e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        setDropTarget('');
+      }}
+      onDrop={(e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        void dropInto('');
+      }}
+      onContextMenu={(e) => openMenu(e, null, treeMenu())}
+    >
       <button
         className={'tree__special' + (view === 'logbook' ? ' is-active' : '')}
         onClick={openLogbook}
@@ -356,6 +612,22 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
         </span>
         <span>Today</span>
         <span className="tree__special-meta">⌘D</span>
+      </button>
+
+      <button
+        className={'tree__special' + (view === 'trash' ? ' is-active' : '')}
+        onClick={() => useStore.getState().setView('trash')}
+      >
+        <span className="tree__glyph">↶</span>
+        <span>Recently deleted</span>
+      </button>
+
+      <button
+        className={'tree__special' + (view === 'tags' ? ' is-active' : '')}
+        onClick={() => useStore.getState().setView('tags')}
+      >
+        <span className="tree__glyph">#</span>
+        <span>Tags</span>
       </button>
 
       <div className="tree__divider" />
@@ -407,6 +679,59 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
           onClose={() => setDialog(null)}
         />
       )}
+      {dialog?.kind === 'move-notes' && (
+        <FolderDialog
+          title={dialog.paths.length === 1 ? 'Move note' : `Move ${dialog.paths.length} notes`}
+          lede="Wikilinks are updated across the vault when their paths need to change."
+          folders={allFolderPaths(snapshot.tree)}
+          initial={
+            dialog.paths.every((path) => parentFolderPath(path) === parentFolderPath(dialog.paths[0]))
+              ? parentFolderPath(dialog.paths[0])
+              : ''
+          }
+          submitLabel="Move"
+          onSubmit={async (folder) => {
+            const changes = await api.moveNotes(dialog.paths, folder);
+            pathsChanged(changes);
+            const moved = new Map(changes.map((change) => [change.oldPath, change.newPath]));
+            setSelectedNotes(new Set(dialog.paths.map((path) => moved.get(path) ?? path)));
+            showToast(`Moved ${dialog.paths.length === 1 ? 'note' : `${dialog.paths.length} notes`}`);
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'rename-folder' && (
+        <TextDialog
+          title="Rename folder"
+          lede="Notes, histories, open tabs, and qualified wikilinks move with it."
+          label="New name"
+          initial={dialog.name}
+          submitLabel="Rename"
+          onSubmit={async (name) => {
+            const changes = await api.renameFolder(dialog.path, name);
+            pathsChanged(changes);
+            showToast(`Renamed folder to ${name}`);
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'move-folder' && (
+        <FolderDialog
+          title="Move folder"
+          lede="The complete folder moves with all of its notes and attachments."
+          folders={allFolderPaths(snapshot.tree).filter(
+            (folder) => folder !== dialog.path && !folder.startsWith(`${dialog.path}/`)
+          )}
+          initial={parentFolderPath(dialog.path)}
+          submitLabel="Move folder"
+          onSubmit={async (folder) => {
+            const changes = await api.moveFolder(dialog.path, folder);
+            pathsChanged(changes);
+            showToast('Moved folder');
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog?.kind === 'open-many' && (
         <ConfirmDialog
           title={`Open ${dialog.paths.length} notes?`}
@@ -419,10 +744,33 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
       {dialog?.kind === 'delete' && (
         <ConfirmDialog
           title={`Delete “${dialog.title}”?`}
-          lede="The Markdown file is removed from disk. This cannot be undone from inside Skald."
+          lede="The Markdown file is removed from the vault. Its latest version is retained in Skald history for recovery."
           confirmLabel="Delete note"
           danger
           onConfirm={() => api.deleteNote(dialog.path)}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'delete-many' && (
+        <ConfirmDialog
+          title={`Delete ${dialog.paths.length} notes?`}
+          lede="Their latest versions are retained in Skald history for recovery."
+          confirmLabel={`Delete ${dialog.paths.length} notes`}
+          danger
+          onConfirm={async () => {
+            await api.deleteNotes(dialog.paths);
+            setSelectedNotes(new Set());
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'delete-folder' && (
+        <ConfirmDialog
+          title={`Delete “${dialog.name}”?`}
+          lede={`The folder and everything inside it will be removed${dialog.notes ? `, including ${dialog.notes} note${dialog.notes === 1 ? '' : 's'}` : ''}. Deleted note text is retained in Skald history.`}
+          confirmLabel="Delete folder"
+          danger
+          onConfirm={() => api.deleteFolder(dialog.path)}
           onClose={() => setDialog(null)}
         />
       )}
@@ -523,6 +871,49 @@ function GraphSidebar({ snapshot }: { snapshot: VaultSnapshot }) {
           <span className="tree__count">{count}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function SearchSidebar({ snapshot }: { snapshot: VaultSnapshot }) {
+  const query = useStore((state) => state.searchQuery);
+  const setQuery = useStore((state) => state.setSearchQuery);
+  const setView = useStore((state) => state.setView);
+  const saved = snapshot.settings.savedSearches;
+  return (
+    <div className="tree">
+      <div className="tree__group-label">Saved searches</div>
+      {saved.map((item) => (
+        <div key={item.id} className="saved-search">
+          <button
+            className={'tree__row mono-row' + (query === item.query ? ' is-active' : '')}
+            onClick={() => {
+              setQuery(item.query);
+              setView('search');
+            }}
+            title={item.query}
+          >
+            <span className="tree__glyph">⌕</span>
+            <span className="tree__label">{item.name}</span>
+          </button>
+          <button
+            className="saved-search__remove"
+            title="Remove saved search"
+            onClick={() =>
+              void api.setSettings({ savedSearches: saved.filter((candidate) => candidate.id !== item.id) })
+            }
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      {!saved.length && (
+        <div className="sidebar__hint">Saved searches appear here for one-click access.</div>
+      )}
+      <div className="tree__divider" />
+      <div className="sidebar__hint">
+        Search note bodies and narrow them with <code>schema:</code>, <code>tag:</code>, or <code>folder:</code>.
+      </div>
     </div>
   );
 }

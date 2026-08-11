@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import type { VaultSnapshot } from '../src-shared/types';
+import type { PathChange, VaultSnapshot } from '../src-shared/types';
 import type { FolderOpenState } from './chrome/tree';
 import { ancestorFolderPaths, expansionPatch, isFolderOpen } from './chrome/tree';
+import { idsToCloseOthers, idsToCloseRight, pinTab, reorderTabs, type Tab } from './chrome/tabs';
 import { api } from './api';
 
 export type View =
@@ -11,13 +12,12 @@ export type View =
   | 'tasks-kanban'
   | 'tasks-calendar'
   | 'graph'
+  | 'search'
+  | 'trash'
+  | 'tags'
   | 'settings';
 
-export interface Tab {
-  kind: 'logbook' | 'editor';
-  /** 'today' for the logbook tab, note path for editor tabs */
-  id: string;
-}
+export type { Tab } from './chrome/tabs';
 
 export type Phase = 'boot' | 'picker' | 'ready';
 
@@ -30,6 +30,9 @@ interface SkaldState {
   dirtyPaths: Record<string, boolean>;
   switcherOpen: boolean;
   toast: string | null;
+  searchQuery: string;
+  editorLocation: { path: string; line: number; column: number; length: number } | null;
+  selectedTag: string | null;
   /** Explorer folders that have been deliberately collapsed or expanded. */
   folderOpen: FolderOpenState;
   docStatus: { schema?: string; words?: number; lncol?: [number, number] | null };
@@ -42,15 +45,24 @@ interface SkaldState {
 
   setView: (v: View) => void;
   openNote: (path: string) => void;
+  openNoteAt: (path: string, line: number, column: number, length: number) => void;
   openNotes: (paths: string[]) => void;
   openLogbook: () => void;
   toggleFolder: (path: string) => void;
   setFoldersOpen: (patch: FolderOpenState) => void;
   closeTab: (id: string) => void;
+  closeOtherTabs: (id: string) => void;
+  closeTabsToRight: (id: string) => void;
+  setTabPinned: (id: string, pinned: boolean) => void;
+  reorderTab: (draggedId: string, targetId: string) => void;
   setDirty: (path: string, dirty: boolean) => void;
   notePathRenamed: (oldPath: string, newPath: string) => void;
+  pathsChanged: (changes: PathChange[]) => void;
   setSwitcherOpen: (open: boolean) => void;
   showToast: (msg: string) => void;
+  setSearchQuery: (query: string) => void;
+  clearEditorLocation: () => void;
+  setSelectedTag: (tag: string | null) => void;
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -64,6 +76,9 @@ export const useStore = create<SkaldState>((set, get) => ({
   dirtyPaths: {},
   switcherOpen: false,
   toast: null,
+  searchQuery: '',
+  editorLocation: null,
+  selectedTag: null,
   folderOpen: {},
   docStatus: {},
   setDocStatus: (d) => set({ docStatus: d }),
@@ -127,6 +142,11 @@ export const useStore = create<SkaldState>((set, get) => ({
     });
   },
 
+  openNoteAt: (path, line, column, length) => {
+    get().openNote(path);
+    set({ editorLocation: { path, line, column, length } });
+  },
+
   openNotes: (paths) => {
     if (!paths.length) return;
     const { tabs, folderOpen } = get();
@@ -181,6 +201,19 @@ export const useStore = create<SkaldState>((set, get) => ({
     set(patch);
   },
 
+  closeOtherTabs: (id) => {
+    for (const closeId of idsToCloseOthers(get().tabs, id)) get().closeTab(closeId);
+  },
+
+  closeTabsToRight: (id) => {
+    for (const closeId of idsToCloseRight(get().tabs, id)) get().closeTab(closeId);
+  },
+
+  setTabPinned: (id, pinned) => set((st) => ({ tabs: pinTab(st.tabs, id, pinned) })),
+
+  reorderTab: (draggedId, targetId) =>
+    set((st) => ({ tabs: reorderTabs(st.tabs, draggedId, targetId) })),
+
   setDirty: (path, dirty) =>
     set((st) => ({ dirtyPaths: { ...st.dirtyPaths, [path]: dirty } })),
 
@@ -190,7 +223,25 @@ export const useStore = create<SkaldState>((set, get) => ({
       selectedPath: st.selectedPath === oldPath ? newPath : st.selectedPath,
     })),
 
+  pathsChanged: (changes) => {
+    const moved = new Map(changes.map((change) => [change.oldPath, change.newPath]));
+    set((st) => {
+      const dirtyPaths: Record<string, boolean> = {};
+      for (const [path, dirty] of Object.entries(st.dirtyPaths)) {
+        dirtyPaths[moved.get(path) ?? path] = dirty;
+      }
+      return {
+        tabs: st.tabs.map((tab) => ({ ...tab, id: moved.get(tab.id) ?? tab.id })),
+        selectedPath: st.selectedPath ? moved.get(st.selectedPath) ?? st.selectedPath : null,
+        dirtyPaths,
+      };
+    });
+  },
+
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
+  setSearchQuery: (query) => set({ searchQuery: query }),
+  clearEditorLocation: () => set({ editorLocation: null }),
+  setSelectedTag: (tag) => set({ selectedTag: tag }),
 
   showToast: (msg) => {
     if (toastTimer) clearTimeout(toastTimer);

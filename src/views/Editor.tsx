@@ -27,6 +27,7 @@ import {
   type MarkdownBlock,
 } from '../../src-shared/liveMarkdown';
 import { buildLinkIndex, resolveLinkTarget } from '../../src-shared/wikilinks';
+import { completeTag, matchingTags, tagCompletionAt, type TagCompletionRange } from '../../src-shared/tags';
 
 type EditorMode = 'live' | 'preview' | 'source';
 
@@ -42,6 +43,8 @@ export function EditorView({
   const setDocStatus = useStore((s) => s.setDocStatus);
   const notePathRenamed = useStore((s) => s.notePathRenamed);
   const showToast = useStore((s) => s.showToast);
+  const editorLocation = useStore((s) => s.editorLocation);
+  const clearEditorLocation = useStore((s) => s.clearEditorLocation);
   const marginOn = snapshot.settings.marginOn;
 
   const [payload, setPayload] = useState<NotePayload | null>(null);
@@ -51,6 +54,8 @@ export function EditorView({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [lncol, setLncol] = useState<[number, number] | null>(null);
+  const [sourceTagRange, setSourceTagRange] = useState<TagCompletionRange | null>(null);
+  const [sourceTagSelected, setSourceTagSelected] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -61,6 +66,11 @@ export function EditorView({
   );
   const linkIndex = useMemo(() => buildLinkIndex(snapshot.notes), [snapshot.notes]);
   const dirty = draft !== null && draft !== payload?.content;
+  const knownTags = useMemo(
+    () => [...new Set([...snapshot.notes.flatMap((note) => note.tags), ...snapshot.tasks.flatMap((task) => task.tags)])],
+    [snapshot.notes, snapshot.tasks]
+  );
+  const sourceTagMatches = sourceTagRange ? matchingTags(knownTags, sourceTagRange.query) : [];
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +90,29 @@ export function EditorView({
     setLncol(null);
     void load();
   }, [path]);
+
+  // Full-text search opens the source at the exact file coordinate. Source
+  // mode is deliberate here: every body match has a stable caret position,
+  // while rendered Markdown may not contain the source characters verbatim.
+  useEffect(() => {
+    if (!payload || editorLocation?.path !== path) return;
+    if (mode !== 'source') {
+      setMode('source');
+      return;
+    }
+    const lines = payload.content.split('\n');
+    const line = Math.max(1, Math.min(editorLocation.line, lines.length));
+    let offset = 0;
+    for (let i = 0; i < line - 1; i++) offset += lines[i].length + 1;
+    offset += Math.max(0, Math.min(editorLocation.column - 1, lines[line - 1].length));
+    const end = Math.min(payload.content.length, offset + editorLocation.length);
+    requestAnimationFrame(() => {
+      taRef.current?.focus();
+      taRef.current?.setSelectionRange(offset, end);
+      taRef.current?.scrollTo({ top: Math.max(0, (line - 5) * 20), behavior: 'smooth' });
+      clearEditorLocation();
+    });
+  }, [payload, editorLocation, mode, path, clearEditorLocation]);
 
   // refresh from disk when the vault changes under us (unless mid-edit)
   useEffect(() => {
@@ -247,6 +280,19 @@ export function EditorView({
     scheduleSave(v);
   };
 
+  const updateSourceTagCompletion = (value: string, cursor: number) => {
+    setSourceTagRange(tagCompletionAt(value, cursor));
+    setSourceTagSelected(0);
+  };
+
+  const chooseSourceTag = (tag: string) => {
+    if (!sourceTagRange) return;
+    const result = completeTag(content, sourceTagRange, tag);
+    onSourceChange(result.text);
+    setSourceTagRange(null);
+    requestAnimationFrame(() => taRef.current?.setSelectionRange(result.caret, result.caret));
+  };
+
   const onBodyChange = (nextBody: string) => {
     const next = replaceMarkdownBody(content, bodyStartLine, nextBody);
     setDraft(next);
@@ -383,6 +429,7 @@ export function EditorView({
                   onChange={onBodyChange}
                   onBlur={saveNow}
                   onLnCol={setLncol}
+                  tags={knownTags}
                 />
               ) : (
                 <div className="editor-body">
@@ -423,17 +470,50 @@ export function EditorView({
               )}
             </>
           ) : (
-            <textarea
-              ref={taRef}
-              className="editor-source"
-              value={content}
-              spellCheck={false}
-              onChange={(e) => onSourceChange(e.target.value)}
-              onKeyUp={updateLnCol}
-              onClick={updateLnCol}
-              onBlur={saveNow}
-              style={{ fontSize: snapshot.settings.editorFontSize - 1.5 }}
-            />
+            <div className="editor-source-wrap">
+              <textarea
+                ref={taRef}
+                className="editor-source"
+                value={content}
+                spellCheck={false}
+                onChange={(e) => {
+                  onSourceChange(e.target.value);
+                  updateSourceTagCompletion(e.target.value, e.target.selectionStart);
+                }}
+                onKeyDown={(e) => {
+                  if (!sourceTagMatches.length) return;
+                  if (e.key === 'ArrowDown') {
+                    setSourceTagSelected((index) => Math.min(sourceTagMatches.length - 1, index + 1));
+                    e.preventDefault();
+                  } else if (e.key === 'ArrowUp') {
+                    setSourceTagSelected((index) => Math.max(0, index - 1));
+                    e.preventDefault();
+                  } else if (e.key === 'Enter' || e.key === 'Tab') {
+                    chooseSourceTag(sourceTagMatches[sourceTagSelected]);
+                    e.preventDefault();
+                  } else if (e.key === 'Escape') {
+                    setSourceTagRange(null);
+                    e.preventDefault();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  updateLnCol();
+                  if (CARET_KEYS.has(e.key)) updateSourceTagCompletion(e.currentTarget.value, e.currentTarget.selectionStart);
+                }}
+                onClick={(e) => {
+                  updateLnCol();
+                  updateSourceTagCompletion(e.currentTarget.value, e.currentTarget.selectionStart);
+                }}
+                onBlur={() => {
+                  setTimeout(() => setSourceTagRange(null), 120);
+                  saveNow();
+                }}
+                style={{ fontSize: snapshot.settings.editorFontSize - 1.5 }}
+              />
+              {sourceTagMatches.length > 0 && (
+                <TagSuggestions tags={sourceTagMatches} selected={sourceTagSelected} onChoose={chooseSourceTag} />
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -814,6 +894,7 @@ function LiveMarkdownEditor({
   onChange,
   onBlur,
   onLnCol,
+  tags,
 }: {
   body: string;
   ctx: MdContext;
@@ -821,18 +902,22 @@ function LiveMarkdownEditor({
   onChange: (body: string) => void;
   onBlur: () => void;
   onLnCol: (pos: [number, number] | null) => void;
+  tags: string[];
 }) {
   // The caret is held as a position in the whole body, not an offset in one
   // block. A keystroke can re-split the blocks under it — pressing Enter is
   // exactly that — and a line and column survive the resplit where a block
   // reference would not.
   const [caret, setCaret] = useState<{ line: number; col: number } | null>(null);
+  const [tagRange, setTagRange] = useState<TagCompletionRange | null>(null);
+  const [tagSelected, setTagSelected] = useState(0);
   const activeRef = useRef<HTMLTextAreaElement>(null);
   const blocks = useMemo(() => splitMarkdownBlocks(body), [body]);
 
   const activeIndex = caret
     ? blocks.findIndex((b) => caret.line >= b.startLine && caret.line <= b.endLine)
     : -1;
+  const tagMatches = tagRange ? matchingTags(tags, tagRange.query) : [];
 
   useEffect(() => {
     if (!caret || activeIndex < 0) return;
@@ -871,6 +956,18 @@ function LiveMarkdownEditor({
     moveCaret(block.startLine + pos.line, pos.col);
   };
 
+  const updateTagCompletion = (value: string, cursor: number) => {
+    setTagRange(tagCompletionAt(value, cursor));
+    setTagSelected(0);
+  };
+
+  const chooseTag = (block: MarkdownBlock, tag: string) => {
+    if (!tagRange) return;
+    const result = completeTag(block.raw, tagRange, tag);
+    setTagRange(null);
+    applyEdit(block, { raw: result.text, caret: result.caret });
+  };
+
   const commitBlur = () => {
     onLnCol(null);
     onBlur();
@@ -894,10 +991,12 @@ function LiveMarkdownEditor({
                   const pos = positionAt(value, e.target.selectionStart);
                   onChange(replaceMarkdownBlock(body, block, value));
                   moveCaret(block.startLine + pos.line, pos.col);
+                  updateTagCompletion(value, e.target.selectionStart);
                 }}
                 onClick={(e) => {
                   const pos = positionAt(e.currentTarget.value, e.currentTarget.selectionStart);
                   moveCaret(block.startLine + pos.line, pos.col);
+                  updateTagCompletion(e.currentTarget.value, e.currentTarget.selectionStart);
                 }}
                 onKeyUp={(e) => {
                   // Only keys that move the caret without changing the text. A
@@ -911,6 +1010,29 @@ function LiveMarkdownEditor({
                   const ta = e.currentTarget;
                   const at = ta.selectionStart;
                   const collapsed = ta.selectionStart === ta.selectionEnd;
+
+                  if (tagMatches.length > 0) {
+                    if (e.key === 'Escape') {
+                      setTagRange(null);
+                      e.preventDefault();
+                      return;
+                    }
+                    if (e.key === 'ArrowDown') {
+                      setTagSelected((selected) => Math.min(tagMatches.length - 1, selected + 1));
+                      e.preventDefault();
+                      return;
+                    }
+                    if (e.key === 'ArrowUp') {
+                      setTagSelected((selected) => Math.max(0, selected - 1));
+                      e.preventDefault();
+                      return;
+                    }
+                    if (e.key === 'Enter' || e.key === 'Tab') {
+                      e.preventDefault();
+                      chooseTag(block, tagMatches[tagSelected]);
+                      return;
+                    }
+                  }
 
                   if (e.key === 'Escape') {
                     e.preventDefault();
@@ -953,8 +1075,14 @@ function LiveMarkdownEditor({
                     return;
                   }
                 }}
-                onBlur={commitBlur}
+                onBlur={() => {
+                  setTimeout(() => setTagRange(null), 120);
+                  commitBlur();
+                }}
               />
+              {tagMatches.length > 0 && (
+                <TagSuggestions tags={tagMatches} selected={tagSelected} onChoose={(tag) => chooseTag(block, tag)} />
+              )}
             </div>
           );
         }
@@ -988,6 +1116,33 @@ function LiveMarkdownEditor({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function TagSuggestions({
+  tags,
+  selected,
+  onChoose,
+}: {
+  tags: string[];
+  selected: number;
+  onChoose: (tag: string) => void;
+}) {
+  return (
+    <div className="tag-suggestions" role="listbox">
+      {tags.map((tag, index) => (
+        <button
+          key={tag}
+          type="button"
+          role="option"
+          aria-selected={index === selected}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onChoose(tag)}
+        >
+          #{tag}
+        </button>
+      ))}
     </div>
   );
 }

@@ -23,6 +23,10 @@ it and your Markdown remains untouched.
   apart. The editor's right panel shows backlinks with snippets, threads in the note, and
   the outline. Renaming a note rewrites every wikilink that points at it, in whichever
   form it was written.
+- **A real explorer** — multi-select notes with Shift/Ctrl/⌘, then move, open, copy, or
+  delete the selection together. Notes and complete folders move by menu or drag-and-drop;
+  qualified wikilinks, histories, graph positions, pinned notes, and open tabs follow them.
+  The tree supports arrow-key navigation and type-ahead.
 - **The Logbook** — the Today view: week activity, open threads, the saga (recent
   activity), recently touched notes, a pinned note, and honest vault stats.
 - **The Constellation** — a stable graph. Star positions are laid out once, persisted, and
@@ -30,14 +34,21 @@ it and your Markdown remains untouched.
   region you can hide. Zoom with the wheel or pinch, drag the background to pan, `0` to
   fit. Your map is a place, not a simulation.
 - **Local note history** — Skald snapshots notes before edits, external changes, renames,
-  deletions, and restores. Earlier versions can be previewed and restored from the editor.
+  deletions, and restores. Earlier versions can be previewed from the editor, and deleted
+  notes can be restored from Recently deleted.
 - **First-class attachments** — pick or drop any file, paste clipboard images, and Skald
   copies them into the vault with collision-safe names and portable relative Markdown links.
   Images render inline; files can be opened or revealed from the editor.
 - **Live Markdown editing** — write in rendered blocks by default, with raw source mode still
   one shortcut away when you want to work directly with the Markdown file.
-- **Skald's Hall** — `⌘K` fuzzy search across notes, tasks, and commands with a live
-  preview pane.
+- **Search** — `⌘K` opens Skald's Hall for fuzzy note, task, and command access. The Search
+  pane searches complete note bodies with ranked snippets and exact locations, supports
+  `schema:`, `tag:`, and `folder:` filters, and pins saved searches in the sidebar.
+- **Tags & templates** — browse frontmatter, inline, and task tags in one pane; complete
+  existing `#tags` while writing; and give each schema a body template with `{{title}}`
+  and `{{date}}` placeholders.
+- **Pro tabs** — reorder and pin tabs, middle-click to close, or use the context menu to
+  close other tabs and tabs to the right.
 - **Encrypted sync** — pair a second device and your vault follows, through
   [GESH](https://github.com/vardirhq/generic-encrypted-sync-hub): a relay that holds
   encrypted blobs just long enough to hand them over. Notes and their attachments are
@@ -82,7 +93,8 @@ Repo layout:
 - `src-main/` — Electron main process: vault manager (scan, watch, index, tasks,
   backlinks, graph layout), IPC, window.
 - `src/` — renderer: React + plain CSS design tokens (no CSS framework).
-- `src-shared/` — pure logic shared by both: frontmatter, tasks, wikilinks, fuzzy search.
+- `src-shared/` — pure logic shared by both: frontmatter, tasks, wikilinks, full-text search,
+  tags, sync protocol, and merge rules.
 - `tools/` — release tooling and the screenshot driver.
 - `tests/` — vitest suites, including an end-to-end suite driving a real temp vault.
 - `archive/skald-v1/` — the previous implementation, kept for reference only.

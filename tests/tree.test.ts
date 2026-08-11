@@ -13,6 +13,7 @@ import {
   parentFolderPath,
   someCollapsed,
   someExpanded,
+  visibleTreeItems,
 } from '../src/chrome/tree';
 
 function folder(path: string, folders: FolderNode[] = [], notes: string[] = []): FolderNode {
@@ -67,6 +68,28 @@ describe('tree walking', () => {
     ]);
     expect(countNotes(findFolder(tree, 'Work')!)).toBe(3);
     expect(countNotes(tree)).toBe(5);
+  });
+});
+
+describe('visible keyboard rows', () => {
+  const labels = new Map([
+    ['inbox.md', 'Inbox'],
+    ['Work/plan.md', 'Plan'],
+    ['Work/Q3/goals.md', 'Goals'],
+    ['Work/Q3/notes.md', 'Notes'],
+    ['Personal/gym.md', 'Gym'],
+  ]);
+
+  it('follows rendered order and skips descendants of collapsed folders', () => {
+    expect(visibleTreeItems(tree, { 'Work/Q3': false }, labels).map((item) => item.path)).toEqual([
+      'Work',
+      'Work/Q3',
+      'Work/Archive',
+      'Work/plan.md',
+      'Personal',
+      'Personal/gym.md',
+      'inbox.md',
+    ]);
   });
 });
 

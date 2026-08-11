@@ -81,7 +81,7 @@ const snapshot = {
     { kind: 'note', verb: 'created', title: iso(now - 2 * day), ref: 'Daily', ts: now - 2 * day },
     { kind: 'task', verb: 'blocked', title: 'Migrate auth from Passport to Lucia', ref: 'Jormungandr API rewrite', ts: now - 3 * day },
   ],
-  settings: { theme: 'midnight', density: 'regular', logoVariant: 'sigil', marginOn: true, pinnedNote: 'Notes/On the use of runes.md', dailyFolder: 'Daily', editorFontSize: 15, autosaveMs: 800 },
+  settings: { theme: 'midnight', density: 'regular', logoVariant: 'sigil', marginOn: true, pinnedNote: 'Notes/On the use of runes.md', dailyFolder: 'Daily', attachmentsFolder: 'Attachments', editorFontSize: 15, autosaveMs: 800, savedSearches: [{ id: 'design', name: 'Design notes', query: 'design tag:vision' }], schemaTemplates: {} },
 };
 
 const rationaleBody = `The hardest part of building a knowledge tool is resisting the urge to make it a database. Most apps drift that way, and you end up with a thousand notes that never become anything. Skald takes the opposite bet: the connections *are* the product, so the editor surfaces them as you write instead of making you file them.
@@ -129,6 +129,8 @@ const initScript = `
         case 'vault:getLast': return SNAPSHOT.vaultPath;
         case 'vault:open': case 'vault:create': case 'vault:snapshot': return SNAPSHOT;
         case 'note:read': return PAYLOAD;
+        case 'search:query': return SNAPSHOT.notes.slice(0, 4).map((note, index) => ({ ...note, snippet: note.excerpt, line: 6 + index * 3, column: 1, length: 6, score: 100 - index }));
+        case 'trash:list': return [{ path: 'Archive/Old direction.md', title: 'Old direction', schema: 'Idea', deletedAt: ${now - 2 * day}, size: 1840 }];
         case 'window:isMaximized': return false;
         case 'settings:set': Object.assign(SNAPSHOT.settings, args[0]); window.__emit && window.__emit(SNAPSHOT); return SNAPSHOT.settings;
         default: return null;

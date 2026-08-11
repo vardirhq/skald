@@ -24,6 +24,7 @@ import {
   countWords,
   localISO,
   safeFileName,
+  renderSchemaTemplate,
 } from '../src-shared/notes';
 import { layoutGraph } from './layout';
 import { isAttachmentPath } from '../src-shared/sync/payload';
@@ -51,8 +52,13 @@ import type {
   VaultSnapshot,
   VaultStats,
   SchemaName,
+  PathChange,
+  SearchResult,
+  DeletedNoteEntry,
 } from '../src-shared/types';
 import { DEFAULT_SETTINGS } from '../src-shared/types';
+import { searchNotes } from '../src-shared/search';
+import { extractInlineTags } from '../src-shared/tags';
 
 interface NoteRecord {
   path: string;
@@ -270,9 +276,10 @@ export class Vault {
       typeof fmCreated === 'string' && /^\d{4}-\d{2}-\d{2}/.test(fmCreated)
         ? new Date(fmCreated).getTime()
         : created;
-    const tags = Array.isArray(frontmatter['tags'])
+    const frontmatterTags = Array.isArray(frontmatter['tags'])
       ? (frontmatter['tags'] as unknown[]).map(String)
       : [];
+    const tags = [...new Map([...frontmatterTags, ...extractInlineTags(body)].map((tag) => [tag.toLocaleLowerCase().replace(/^#/, ''), tag.replace(/^#/, '')])).values()];
     this.notes.set(path, {
       path,
       raw,
@@ -295,12 +302,15 @@ export class Vault {
 
   private onFsEvent(kind: string, full: string): void {
     const path = this.rel(full);
+    const isSelf = (this.selfWrites.get(path) ?? 0) > Date.now() - 2500;
     if (kind === 'addDir') {
+      if (isSelf) return;
       this.folders.add(path);
       this.broadcast();
       return;
     }
     if (kind === 'unlinkDir') {
+      if (isSelf) return;
       this.folders.delete(path);
       for (const p of [...this.notes.keys()]) {
         if (p.startsWith(path + '/')) this.notes.delete(p);
@@ -315,11 +325,11 @@ export class Vault {
       return;
     }
     if (kind === 'unlink') {
+      if (isSelf) return;
       this.notes.delete(path);
       this.broadcast();
       return;
     }
-    const isSelf = (this.selfWrites.get(path) ?? 0) > Date.now() - 2500;
     const previous = this.notes.get(path);
     this.indexFile(full).then(async () => {
       const current = this.notes.get(path);
@@ -352,6 +362,22 @@ export class Vault {
 
   resolveTarget(name: string): string | null {
     return resolveLinkTarget(this.linkIndex(), name);
+  }
+
+  search(query: string): SearchResult[] {
+    return searchNotes(
+      [...this.notes.values()].map((rec) => ({
+        path: rec.path,
+        title: rec.title,
+        schema: rec.schema,
+        folder: rec.folder,
+        tags: rec.tags,
+        body: rec.body,
+        bodyStartLine: rec.bodyStartLine,
+        updated: rec.updated,
+      })),
+      query
+    );
   }
 
   // ---------- snapshot ----------
@@ -786,6 +812,58 @@ export class Vault {
     this.broadcast();
   }
 
+  async listDeletedNotes(): Promise<DeletedNoteEntry[]> {
+    const root = this.stateFile('history');
+    const out: DeletedNoteEntry[] = [];
+    const walk = async (dir: string, segments: string[]): Promise<void> => {
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      const historyFiles = entries.filter(
+        (entry) => entry.isFile() && /^\d+-delete\.md$/.test(entry.name)
+      );
+      if (historyFiles.length && segments.length) {
+        const path = segments.map(decodeURIComponent).join('/');
+        if (!this.notes.has(path)) {
+          const latest = historyFiles.sort((a, b) => Number(b.name.split('-')[0]) - Number(a.name.split('-')[0]))[0];
+          const full = join(dir, latest.name);
+          try {
+            const [content, info] = await Promise.all([readFile(full, 'utf-8'), stat(full)]);
+            const parsed = parseFrontmatter(content);
+            const title = noteTitle(parsed.frontmatter, path);
+            out.push({
+              path,
+              title,
+              schema: inferSchema(parsed.frontmatter, title, topFolder(path)),
+              deletedAt: Number(latest.name.split('-')[0]),
+              size: info.size,
+            });
+          } catch {
+            // One damaged snapshot should not hide the rest of the trash list.
+          }
+        }
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.isDirectory()) await walk(join(dir, entry.name), [...segments, entry.name]);
+      }
+    };
+    await walk(root, []);
+    return out.sort((a, b) => b.deletedAt - a.deletedAt);
+  }
+
+  async restoreDeletedNote(path: string): Promise<void> {
+    if (this.notes.has(path) || existsSync(this.full(path))) {
+      throw new Error(`A note already exists at “${path}”.`);
+    }
+    const version = (await this.listNoteHistory(path)).find((entry) => entry.reason === 'delete');
+    if (!version) throw new Error('Deleted note snapshot not found');
+    await this.restoreNoteHistoryVersion(path, version.id);
+  }
+
   async writeNote(
     path: string,
     content: string,
@@ -815,18 +893,20 @@ export class Vault {
 
   async createNote(folder: string, title: string, schema: SchemaName): Promise<string> {
     const name = safeFileName(title) || 'Untitled';
-    const dir = folder ? folder.replace(/^\/+|\/+$/g, '') : '';
+    const dir = this.cleanFolderPath(folder, true);
     let path = dir ? `${dir}/${name}.md` : `${name}.md`;
     let n = 2;
     while (this.notes.has(path) || existsSync(this.full(path))) {
       path = dir ? `${dir}/${name} ${n}.md` : `${name} ${n}.md`;
       n++;
     }
+    const date = localISO(new Date());
     const fm: Record<string, unknown> = {
       schema,
-      created: localISO(new Date()),
+      created: date,
     };
-    const content = serializeFrontmatter(fm, '');
+    const body = renderSchemaTemplate(this.settings.schemaTemplates[schema] ?? '', name, date);
+    const content = serializeFrontmatter(fm, body);
     this.markSelfWrite(path);
     const full = this.full(path);
     await mkdir(dirname(full), { recursive: true });
@@ -849,7 +929,8 @@ export class Vault {
     const dir = this.settings.dailyFolder;
     const path = `${dir}/${today}.md`;
     if (this.notes.has(path)) return path;
-    const content = serializeFrontmatter({ schema: 'Daily', created: today }, '');
+    const body = renderSchemaTemplate(this.settings.schemaTemplates.Daily ?? '', today, today);
+    const content = serializeFrontmatter({ schema: 'Daily', created: today }, body);
     this.markSelfWrite(path);
     const full = this.full(path);
     await mkdir(dirname(full), { recursive: true });
@@ -957,12 +1038,260 @@ export class Vault {
     this.broadcast();
   }
 
+  async deleteNotes(paths: string[]): Promise<void> {
+    const unique = [...new Set(paths)];
+    for (const path of unique) {
+      if (!this.notes.has(path)) throw new Error(`Note not found: ${path}`);
+    }
+    for (const path of unique) await this.deleteNote(path);
+  }
+
+  /**
+   * Move several notes as one logical operation. All wikilinks are resolved
+   * against the pre-move index, so duplicate file names cannot make a later
+   * move in the batch rewrite the wrong target.
+   */
+  async moveNotes(paths: string[], folder: string): Promise<PathChange[]> {
+    const destination = this.cleanFolderPath(folder, true);
+    const unique = [...new Set(paths)];
+    if (!unique.length) return [];
+    const changes = unique.map((oldPath) => {
+      if (!this.notes.has(oldPath)) throw new Error(`Note not found: ${oldPath}`);
+      return { oldPath, newPath: destination ? `${destination}/${basename(oldPath)}` : basename(oldPath) };
+    });
+    await this.relocateNotes(changes, async () => {
+      if (destination) await mkdir(this.full(destination), { recursive: true });
+      for (const { oldPath, newPath } of changes) {
+        if (oldPath !== newPath) await rename(this.full(oldPath), this.full(newPath));
+      }
+    });
+    if (destination) this.folders.add(destination);
+    this.recordActivity({
+      kind: 'note',
+      verb: changes.length === 1 ? 'moved' : `moved ${changes.length} notes`,
+      title: changes.length === 1 ? titleFromPath(changes[0].newPath) : `${changes.length} notes`,
+      ref: destination || 'vault',
+      ts: Date.now(),
+    });
+    this.broadcast();
+    return changes.filter((c) => c.oldPath !== c.newPath);
+  }
+
   async createFolder(folderPath: string): Promise<void> {
-    const clean = folderPath.replace(/^\/+|\/+$/g, '');
+    const clean = this.cleanFolderPath(folderPath);
     if (!clean) return;
     await mkdir(this.full(clean), { recursive: true });
     this.folders.add(clean);
     this.broadcast();
+  }
+
+  async renameFolder(path: string, name: string): Promise<PathChange[]> {
+    const clean = this.cleanFolderPath(path);
+    const safeName = safeFileName(name);
+    if (!safeName) throw new Error('Empty folder name');
+    const parent = clean.includes('/') ? clean.slice(0, clean.lastIndexOf('/')) : '';
+    return this.relocateFolder(clean, parent ? `${parent}/${safeName}` : safeName);
+  }
+
+  async moveFolder(path: string, parent: string): Promise<PathChange[]> {
+    const clean = this.cleanFolderPath(path);
+    const destinationParent = this.cleanFolderPath(parent, true);
+    const destination = destinationParent ? `${destinationParent}/${basename(clean)}` : basename(clean);
+    return this.relocateFolder(clean, destination);
+  }
+
+  async deleteFolder(path: string): Promise<void> {
+    const clean = this.cleanFolderPath(path);
+    if (!this.folders.has(clean) && !existsSync(this.full(clean))) {
+      throw new Error(`Folder not found: ${clean}`);
+    }
+    const notes = [...this.notes.values()].filter((rec) => rec.path.startsWith(`${clean}/`));
+    for (const rec of notes) await this.storeHistory(rec.path, rec.raw, 'delete', true);
+    for (const rec of notes) {
+      this.markSelfWrite(rec.path);
+      this.notes.delete(rec.path);
+      delete this.positions[rec.path];
+      if (this.settings.pinnedNote === rec.path) this.settings.pinnedNote = null;
+    }
+    await rm(this.full(clean), { recursive: true, force: true });
+    for (const folder of [...this.folders]) {
+      if (folder === clean || folder.startsWith(`${clean}/`)) this.folders.delete(folder);
+    }
+    this.savePositions();
+    this.saveSettings();
+    this.recordActivity({
+      kind: 'note',
+      verb: 'deleted folder',
+      title: basename(clean),
+      ref: clean.includes('/') ? clean.slice(0, clean.lastIndexOf('/')) : 'vault',
+      ts: Date.now(),
+    });
+    this.broadcast();
+  }
+
+  private cleanFolderPath(path: string, allowRoot = false): string {
+    const clean = path.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!clean) {
+      if (allowRoot) return '';
+      throw new Error('The vault root cannot be changed.');
+    }
+    const parts = clean.split('/');
+    if (
+      parts.some(
+        (part) =>
+          !part ||
+          part === '.' ||
+          part === '..' ||
+          part.startsWith('.') ||
+          safeFileName(part) !== part
+      )
+    ) {
+      throw new Error('Folder path contains an invalid name.');
+    }
+    this.full(clean);
+    return clean;
+  }
+
+  private async relocateFolder(oldPath: string, newPath: string): Promise<PathChange[]> {
+    if (!this.folders.has(oldPath) && !existsSync(this.full(oldPath))) {
+      throw new Error(`Folder not found: ${oldPath}`);
+    }
+    this.cleanFolderPath(newPath);
+    if (oldPath === newPath) return [];
+    if (newPath.startsWith(`${oldPath}/`)) throw new Error('A folder cannot be moved inside itself.');
+    if (existsSync(this.full(newPath))) throw new Error(`A folder already exists at “${newPath}”.`);
+
+    const changes = [...this.notes.keys()]
+      .filter((path) => path.startsWith(`${oldPath}/`))
+      .map((path) => ({ oldPath: path, newPath: `${newPath}${path.slice(oldPath.length)}` }));
+    const movedFolders = [...this.folders].filter(
+      (folder) => folder === oldPath || folder.startsWith(`${oldPath}/`)
+    );
+    for (const folder of movedFolders) {
+      this.markSelfWrite(folder);
+      this.markSelfWrite(`${newPath}${folder.slice(oldPath.length)}`);
+    }
+    const moveDirectory = async () => {
+      await mkdir(dirname(this.full(newPath)), { recursive: true });
+      await rename(this.full(oldPath), this.full(newPath));
+    };
+    if (changes.length) await this.relocateNotes(changes, moveDirectory);
+    else await moveDirectory();
+
+    for (const folder of movedFolders) this.folders.delete(folder);
+    for (const folder of movedFolders) this.folders.add(`${newPath}${folder.slice(oldPath.length)}`);
+    this.recordActivity({
+      kind: 'note',
+      verb: 'moved folder',
+      title: `${basename(oldPath)} → ${basename(newPath)}`,
+      ref: newPath.includes('/') ? newPath.slice(0, newPath.lastIndexOf('/')) : 'vault',
+      ts: Date.now(),
+    });
+    this.broadcast();
+    return changes;
+  }
+
+  private async relocateNotes(
+    changes: PathChange[],
+    moveOnDisk: () => Promise<void>
+  ): Promise<void> {
+    const effective = changes.filter((change) => change.oldPath !== change.newPath);
+    if (!effective.length) return;
+    const moving = new Set(effective.map((change) => change.oldPath));
+    const destinations = new Set<string>();
+    for (const { newPath } of effective) {
+      this.full(newPath);
+      if (destinations.has(newPath)) throw new Error(`More than one note would become “${newPath}”.`);
+      destinations.add(newPath);
+      if (!moving.has(newPath) && (this.notes.has(newPath) || existsSync(this.full(newPath)))) {
+        throw new Error(`A note already exists at “${newPath}”.`);
+      }
+    }
+
+    const originalIndex = this.linkIndex();
+    const pathMap = new Map(effective.map((change) => [change.oldPath, change.newPath]));
+    const finalIndex = buildLinkIndex(
+      [...this.notes.values()].map((rec) => ({
+        path: pathMap.get(rec.path) ?? rec.path,
+        title: rec.title,
+      }))
+    );
+    const rewritten = new Map<string, string>();
+    for (const rec of this.notes.values()) {
+      const raw = rewriteWikilinks(
+        rec.raw,
+        (target) => {
+          const hit = resolveLinkTarget(originalIndex, target);
+          return !!hit && pathMap.has(hit);
+        },
+        (target) => {
+          const hit = resolveLinkTarget(originalIndex, target)!;
+          const newPath = pathMap.get(hit)!;
+          const shaped = retargetWikilink(target, newPath);
+          if (resolveLinkTarget(finalIndex, shaped) === newPath) return shaped;
+          const rooted = /^\s*\//.test(target);
+          const keepExt = /\.md\s*$/i.test(target);
+          const fullTarget = newPath.replace(/\.md$/i, '');
+          return `${rooted ? '/' : ''}${fullTarget}${keepExt ? '.md' : ''}`;
+        }
+      );
+      rewritten.set(rec.path, raw);
+      if (raw !== rec.raw && !moving.has(rec.path)) await this.storeHistory(rec.path, rec.raw, 'edit');
+    }
+    for (const { oldPath, newPath } of effective) {
+      const rec = this.notes.get(oldPath)!;
+      await this.storeHistory(oldPath, rec.raw, 'rename', true);
+      this.markSelfWrite(oldPath);
+      this.markSelfWrite(newPath);
+    }
+
+    await moveOnDisk();
+
+    for (const { oldPath, newPath } of effective) {
+      const oldHistory = this.historyDir(oldPath);
+      const newHistory = this.historyDir(newPath);
+      if (existsSync(oldHistory)) {
+        await mkdir(dirname(newHistory), { recursive: true });
+        if (!existsSync(newHistory)) {
+          await rename(oldHistory, newHistory);
+        } else {
+          // A previously deleted note may already own history at the target
+          // path. Preserve both timelines, making colliding snapshot ids
+          // unique rather than overwriting either one.
+          await mkdir(newHistory, { recursive: true });
+          for (const name of await readdir(oldHistory)) {
+            let destination = join(newHistory, name);
+            const match = name.match(/^(\d+)-(edit|external|rename|delete|restore|sync)\.md$/);
+            if (!match) continue;
+            let stamp = Number(match[1]);
+            while (existsSync(destination)) destination = join(newHistory, `${++stamp}-${match[2]}.md`);
+            await rename(join(oldHistory, name), destination);
+          }
+          await rm(oldHistory, { recursive: true, force: true });
+        }
+      }
+    }
+
+    const records = [...this.notes.values()];
+    for (const { oldPath } of effective) this.notes.delete(oldPath);
+    for (const rec of records) {
+      const destination = pathMap.get(rec.path) ?? rec.path;
+      const raw = rewritten.get(rec.path) ?? rec.raw;
+      if (destination !== rec.path || raw !== rec.raw) {
+        await writeFile(this.full(destination), raw, 'utf-8');
+        this.indexContent(destination, raw, rec.created, Date.now());
+      }
+    }
+    for (const { oldPath, newPath } of effective) {
+      if (this.positions[oldPath]) {
+        this.positions[newPath] = this.positions[oldPath];
+        delete this.positions[oldPath];
+      }
+      if (this.settings.pinnedNote === oldPath) this.settings.pinnedNote = newPath;
+    }
+    this.savePositions();
+    this.saveSettings();
+    this.ensurePositions();
   }
 
   // ---------- tasks ----------

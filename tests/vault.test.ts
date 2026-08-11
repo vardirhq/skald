@@ -58,7 +58,7 @@ describe('Vault end-to-end', () => {
     expect(snap.notes).toHaveLength(3);
     const proj = snap.notes.find((n) => n.title === 'Jormungandr')!;
     expect(proj.schema).toBe('Project');
-    expect(proj.tags).toEqual(['api']);
+    expect(proj.tags).toEqual(['api', 'editor']);
     expect(proj.links).toEqual(['Stack decisions.md']);
 
     const daily = snap.notes.find((n) => n.title === '2026-05-28')!;
@@ -167,6 +167,16 @@ describe('Vault end-to-end', () => {
     expect(meta.schema).toBe('Project');
   });
 
+  it('applies the selected schema template when creating a note', async () => {
+    vault = await makeVault();
+    vault.setSettings({ schemaTemplates: { Project: '# {{title}}\n\nStarted {{date}}.\n' } });
+    const path = await vault.createNote('Projects', 'Template Saga', 'Project');
+    const created = readFileSync(join(dir, path), 'utf-8');
+    expect(created).toContain('schema: Project');
+    expect(created).toContain('# Template Saga');
+    expect(created).toContain('Started 2026-');
+  });
+
   it('renames a note and rewrites wikilinks across the vault', async () => {
     vault = await makeVault();
     const newPath = await vault.renameNote('Projects/Jormungandr.md', 'World Serpent');
@@ -239,6 +249,101 @@ describe('Vault end-to-end', () => {
     expect(snap.notes.some((n) => n.title === '2026-05-28')).toBe(false);
   });
 
+  it('moves several notes together and rewrites links using the original index', async () => {
+    mkdirSync(join(dir, 'Archive'));
+    writeFileSync(join(dir, 'Projects', 'Twin.md'), 'project twin\n');
+    writeFileSync(join(dir, 'Daily', 'Twin.md'), 'daily twin\n');
+    writeFileSync(
+      join(dir, 'Index.md'),
+      '[[Projects/Jormungandr]] [[Projects/Twin]] [[Daily/Twin]] [[Stack decisions]]\n'
+    );
+    vault = await makeVault();
+
+    const changes = await vault.moveNotes(
+      ['Projects/Jormungandr.md', 'Projects/Twin.md'],
+      'Archive'
+    );
+    expect(changes).toEqual([
+      { oldPath: 'Projects/Jormungandr.md', newPath: 'Archive/Jormungandr.md' },
+      { oldPath: 'Projects/Twin.md', newPath: 'Archive/Twin.md' },
+    ]);
+    expect(readFileSync(join(dir, 'Index.md'), 'utf-8')).toContain(
+      '[[Archive/Jormungandr]] [[Archive/Twin]] [[Daily/Twin]]'
+    );
+    expect(vault.snapshot().notes.some((n) => n.path === 'Archive/Jormungandr.md')).toBe(true);
+    expect(vault.snapshot().notes.some((n) => n.path === 'Projects/Jormungandr.md')).toBe(false);
+    expect((await vault.listNoteHistory('Archive/Jormungandr.md')).some((h) => h.reason === 'rename')).toBe(true);
+  });
+
+  it('qualifies a bare link when moving would make it resolve to a same-named note', async () => {
+    mkdirSync(join(dir, 'A'));
+    mkdirSync(join(dir, 'B'));
+    mkdirSync(join(dir, 'Z'));
+    writeFileSync(join(dir, 'A', 'Twin.md'), 'first\n');
+    writeFileSync(join(dir, 'B', 'Twin.md'), 'second\n');
+    writeFileSync(join(dir, 'Index.md'), 'Keep [[Twin]] pointing at the first note.\n');
+    vault = await makeVault();
+    expect(vault.resolveTarget('Twin')).toBe('A/Twin.md');
+
+    await vault.moveNotes(['A/Twin.md'], 'Z');
+    expect(readFileSync(join(dir, 'Index.md'), 'utf-8')).toContain('[[Z/Twin]]');
+    expect(vault.snapshot().notes.find((note) => note.path === 'Index.md')?.links).toEqual(['Z/Twin.md']);
+  });
+
+  it('renames and moves nested folders without losing histories or qualified links', async () => {
+    mkdirSync(join(dir, 'Archive'));
+    mkdirSync(join(dir, 'Projects', 'Nested'));
+    writeFileSync(join(dir, 'Projects', 'Nested', 'Plan.md'), 'See [[Projects/Jormungandr]].\n');
+    writeFileSync(join(dir, 'Index.md'), 'Open [[Projects/Nested/Plan]].\n');
+    vault = await makeVault();
+    await vault.writeNote('Projects/Nested/Plan.md', 'Changed, still [[Projects/Jormungandr]].\n');
+
+    const renamed = await vault.renameFolder('Projects/Nested', 'Plans');
+    expect(renamed).toEqual([
+      { oldPath: 'Projects/Nested/Plan.md', newPath: 'Projects/Plans/Plan.md' },
+    ]);
+    expect(readFileSync(join(dir, 'Index.md'), 'utf-8')).toContain('[[Projects/Plans/Plan]]');
+    expect(await vault.listNoteHistory('Projects/Plans/Plan.md')).not.toHaveLength(0);
+
+    const moved = await vault.moveFolder('Projects/Plans', 'Archive');
+    expect(moved[0].newPath).toBe('Archive/Plans/Plan.md');
+    expect(readFileSync(join(dir, 'Index.md'), 'utf-8')).toContain('[[Archive/Plans/Plan]]');
+    expect(vault.snapshot().tree.folders.find((f) => f.path === 'Archive')?.folders[0].path).toBe(
+      'Archive/Plans'
+    );
+  });
+
+  it('moves folders that contain attachments but no Markdown notes', async () => {
+    mkdirSync(join(dir, 'Assets'));
+    mkdirSync(join(dir, 'Archive'));
+    writeFileSync(join(dir, 'Assets', 'cover.png'), Buffer.from([1, 2, 3]));
+    vault = await makeVault();
+    expect(await vault.moveFolder('Assets', 'Archive')).toEqual([]);
+    expect(readFileSync(join(dir, 'Archive', 'Assets', 'cover.png'))).toEqual(Buffer.from([1, 2, 3]));
+    expect(vault.snapshot().tree.folders.some((folder) => folder.path === 'Assets')).toBe(false);
+  });
+
+  it('rejects path traversal, collisions, and moving a folder into itself', async () => {
+    mkdirSync(join(dir, 'Projects', 'Nested'));
+    writeFileSync(join(dir, 'Projects', 'Nested', 'Plan.md'), 'plan\n');
+    writeFileSync(join(dir, 'Projects', 'Stack decisions.md'), 'collision\n');
+    vault = await makeVault();
+    await expect(vault.createFolder('../outside')).rejects.toThrow('invalid');
+    await expect(vault.moveNotes(['Stack decisions.md'], 'Projects')).rejects.toThrow(
+      'already exists'
+    );
+    await expect(vault.moveFolder('Projects', 'Projects/Nested')).rejects.toThrow(
+      'inside itself'
+    );
+  });
+
+  it('deletes folders recursively while retaining deleted-note history', async () => {
+    vault = await makeVault();
+    await vault.deleteFolder('Projects');
+    expect(vault.snapshot().notes.some((n) => n.path.startsWith('Projects/'))).toBe(false);
+    expect((await vault.listNoteHistory('Projects/Jormungandr.md'))[0].reason).toBe('delete');
+  });
+
   it('persists and applies settings', async () => {
     vault = await makeVault();
     vault.setSettings({ theme: 'light', marginOn: false });
@@ -283,6 +388,13 @@ describe('Vault end-to-end', () => {
     const history = await vault.listNoteHistory(path);
     expect(history[0].reason).toBe('delete');
     expect((await vault.readNoteHistoryVersion(path, history[0].id)).content).toBe(original);
+
+    expect(await vault.listDeletedNotes()).toEqual([
+      expect.objectContaining({ path, title: 'Stack decisions', schema: 'Note' }),
+    ]);
+    await vault.restoreDeletedNote(path);
+    expect(readFileSync(join(dir, path), 'utf-8')).toBe(original);
+    expect(await vault.listDeletedNotes()).toEqual([]);
   });
 
   it('seeds an empty vault with a welcome saga', async () => {

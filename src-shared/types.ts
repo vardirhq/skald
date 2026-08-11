@@ -127,6 +127,8 @@ export interface VaultSettings {
   attachmentsFolder: string;
   editorFontSize: number;
   autosaveMs: number;
+  savedSearches: SavedSearch[];
+  schemaTemplates: Partial<Record<SchemaName, string>>;
 }
 
 export const DEFAULT_SETTINGS: VaultSettings = {
@@ -139,6 +141,8 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   attachmentsFolder: 'Attachments',
   editorFontSize: 15,
   autosaveMs: 800,
+  savedSearches: [],
+  schemaTemplates: {},
 };
 
 export interface VaultSnapshot {
@@ -201,4 +205,39 @@ export interface NoteHistoryEntry {
 
 export interface NoteHistoryVersion extends NoteHistoryEntry {
   content: string;
+}
+
+/** One path changed by a filesystem operation. Used to keep renderer state in sync. */
+export interface PathChange {
+  oldPath: string;
+  newPath: string;
+}
+
+export interface SearchResult {
+  path: string;
+  title: string;
+  schema: SchemaName;
+  folder: string;
+  tags: string[];
+  snippet: string;
+  /** 1-based line and column in the complete Markdown file. */
+  line: number;
+  column: number;
+  length: number;
+  score: number;
+  updated: number;
+}
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: string;
+}
+
+export interface DeletedNoteEntry {
+  path: string;
+  title: string;
+  schema: SchemaName;
+  deletedAt: number;
+  size: number;
 }
