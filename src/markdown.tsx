@@ -2,6 +2,8 @@ import { Fragment, type ReactNode } from 'react';
 import { extractTasks } from '../src-shared/tasks';
 import { parseWikilink } from '../src-shared/wikilinks';
 import type { AttachmentRef } from '../src-shared/types';
+import { normalizeGitHubRepo } from '../src-shared/github';
+import { GitHubCard } from './components/GitHubCard';
 
 // Markdown → React, emitting exactly the DOM the design system styles.
 // Markdown stays the storage format; this is the reading surface.
@@ -19,6 +21,8 @@ export interface MdContext {
   todayISO: string;
   /** line offset of the body within the raw file */
   lineOffset: number;
+  /** Repository inherited by a bare > [!github] card. */
+  githubRepo?: string | null;
 }
 
 const TASK_LINE = /^\s*[-*+]\s+\[( |x|X)\]\s+/;
@@ -129,6 +133,19 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
       if (calloutMatch) {
         const label = calloutMatch[1];
         const rest = [calloutMatch[2], ...quoteLines.slice(1)].join(' ').trim();
+        if (label.toLowerCase() === 'github') {
+          const repo = normalizeGitHubRepo(rest) ?? ctx.githubRepo;
+          out.push(
+            repo ? (
+              <GitHubCard key={`gh${key++}`} repo={repo} openExternal={ctx.openExternal} />
+            ) : (
+              <div key={`gh${key++}`} className="github-card github-card--error">
+                Add <code>github: owner/repository</code> to this note or put a repository after the callout.
+              </div>
+            )
+          );
+          continue;
+        }
         out.push(
           <div key={`co${key++}`} className="editor-callout">
             <div className="label">{label}</div>

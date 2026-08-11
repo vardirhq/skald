@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { SchemaName, VaultSnapshot, VaultSettings } from '../../src-shared/types';
+import type {
+  GitHubAuthStatus,
+  GitHubDeviceLogin,
+  SchemaName,
+  VaultSnapshot,
+  VaultSettings,
+} from '../../src-shared/types';
 import { SCHEMA_NAMES } from '../../src-shared/types';
 import { Rune, schemaTone } from '../ui/runes';
 import { Logo, type LogoVariant } from '../ui/logo';
@@ -8,7 +14,7 @@ import { useStore } from '../store';
 import { allFolderPaths } from '../chrome/Sidebar';
 import { SyncPane } from './SyncPane';
 
-type Pane = 'appearance' | 'themes' | 'editor' | 'schemas' | 'vault' | 'sync' | 'shortcuts';
+type Pane = 'appearance' | 'themes' | 'editor' | 'schemas' | 'vault' | 'sync' | 'github' | 'shortcuts';
 
 const SCHEMA_DESC: Record<string, string> = {
   Note: 'Catch-all note.',
@@ -36,6 +42,7 @@ export function SettingsView({ snapshot }: { snapshot: VaultSnapshot }) {
         {pane === 'schemas' && <SchemasPane snapshot={snapshot} s={s} set={set} />}
         {pane === 'vault' && <VaultPane snapshot={snapshot} s={s} set={set} />}
         {pane === 'sync' && <SyncPane />}
+        {pane === 'github' && <GitHubPane />}
         {pane === 'shortcuts' && <ShortcutsPane />}
       </div>
     </div>
@@ -53,6 +60,8 @@ function SettingsNav({ pane, setPane }: { pane: Pane; setPane: (p: Pane) => void
     { group: 'vault' },
     { id: 'vault', label: 'Vault', schema: 'Place' },
     { id: 'sync', label: 'Sync', schema: 'Person' },
+    { group: 'connections' },
+    { id: 'github', label: 'GitHub', schema: 'Project' },
     { id: 'shortcuts', label: 'Shortcuts', schema: 'Daily' },
   ];
   return (
@@ -405,6 +414,108 @@ function AttachmentFolderSetting({
         if (e.key === 'Enter') e.currentTarget.blur();
       }}
     />
+  );
+}
+
+function GitHubPane() {
+  const [status, setStatus] = useState<GitHubAuthStatus | null>(null);
+  const [device, setDevice] = useState<GitHubDeviceLogin | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void api.githubStatus().then(setStatus).catch((err) => setError(String(err)));
+    return () => { void api.githubCancelLogin(); };
+  }, []);
+
+  const connect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const login = await api.githubBeginLogin();
+      setDevice(login);
+      window.open(login.verificationUri);
+      const next = await api.githubCompleteLogin();
+      setStatus(next);
+      setDevice(null);
+    } catch (err) {
+      const message = String((err as Error).message ?? err);
+      if (!/cancelled/i.test(message)) setError(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = () => {
+    void api.githubCancelLogin();
+    setDevice(null);
+    setBusy(false);
+  };
+
+  return (
+    <>
+      <h1 className="settings__title">GitHub</h1>
+      <p className="settings__lede">
+        Repository cards work for public repositories without an account. Connect GitHub only to
+        read repositories your GitHub App installation can access.
+      </p>
+
+      <Row
+        title="Connection"
+        desc={status?.connected ? `Signed in as @${status.login ?? 'GitHub user'}. Tokens stay encrypted in your OS keyring.` : 'Optional. Skald requests read-only repository access.'}
+      >
+        <div className="github-settings__actions">
+          {status?.connected ? (
+            <>
+              <span className="github-settings__identity">@{status.login ?? 'connected'}</span>
+              <button className="btn" onClick={() => void api.githubDisconnect().then(setStatus)}>Disconnect</button>
+            </>
+          ) : (
+            <button
+              className="btn btn--accent"
+              disabled={busy || !status?.configured || !status?.secretsProtected}
+              onClick={() => void connect()}
+            >
+              {busy ? 'Waiting for GitHub…' : 'Connect GitHub'}
+            </button>
+          )}
+        </div>
+      </Row>
+
+      {device && (
+        <div className="github-device-login">
+          <div>
+            <strong>Enter this code on GitHub</strong>
+            <code>{device.userCode}</code>
+            <span>The GitHub device page opened in your browser.</span>
+          </div>
+          <div>
+            <button className="btn" onClick={() => window.open(device.verificationUri)}>Open GitHub</button>
+            <button className="btn btn--ghost" onClick={cancel}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {status && !status.configured && (
+        <div className="settings__notice">
+          Private-repository login is not configured in this build. Set
+          <code>SKALD_GITHUB_CLIENT_ID</code> and <code>SKALD_GITHUB_APP_SLUG</code> when building;
+          public repository cards still work.
+        </div>
+      )}
+      {status && !status.secretsProtected && (
+        <div className="settings__notice settings__notice--warn">
+          Unlock your OS keyring before connecting. Skald will not save a GitHub token without encrypted storage.
+        </div>
+      )}
+      {error && <div className="settings__notice settings__notice--warn">{error}</div>}
+
+      {status?.connected && status.installUrl && (
+        <Row title="Repository access" desc="Add or remove private repositories from this GitHub App installation.">
+          <button className="btn" onClick={() => window.open(status.installUrl!)}>Manage on GitHub ↗</button>
+        </Row>
+      )}
+    </>
   );
 }
 

@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { Vault } from './vault';
 import { SyncEngine } from './sync';
+import { GitHubService } from './github';
 import { loadAppConfig, saveAppConfig } from './config';
 import type { VaultSettings } from '../src-shared/types';
 import type { TaskEdits } from '../src-shared/tasks';
@@ -13,6 +14,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let vault: Vault | null = null;
 let sync: SyncEngine | null = null;
+const github = new GitHubService();
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'skald-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -264,6 +266,18 @@ function registerIpc() {
   syncHandle('sync:snapshot', () => requireSync().pushSnapshot());
   syncHandle('sync:setEnabled', (enabled: boolean) => requireSync().setEnabled(enabled));
   syncHandle('sync:disconnect', () => requireSync().disconnect());
+
+  // ----- GitHub -----
+  // Access tokens stay behind this boundary. The renderer only receives
+  // connection state and the small, normalized repository-card model.
+  syncHandle('github:status', () => github.status());
+  syncHandle('github:login:begin', () => github.beginLogin());
+  syncHandle('github:login:complete', () => github.completeLogin());
+  syncHandle('github:login:cancel', () => github.cancelLogin());
+  syncHandle('github:disconnect', () => github.disconnect());
+  syncHandle('github:repository', (repo: string, force?: boolean) =>
+    github.repository(repo, force)
+  );
 
   // ----- window controls -----
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());

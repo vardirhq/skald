@@ -241,3 +241,38 @@ export interface DeletedNoteEntry {
   deletedAt: number;
   size: number;
 }
+
+export interface GitHubAuthStatus {
+  /** False only in builds that have not been given Skald's public GitHub App client id. */
+  configured: boolean;
+  connected: boolean;
+  login: string | null;
+  secretsProtected: boolean;
+  installUrl: string | null;
+}
+
+export interface GitHubDeviceLogin {
+  userCode: string;
+  verificationUri: string;
+  expiresAt: number;
+}
+
+export interface GitHubRepositoryCard {
+  repo: string;
+  url: string;
+  name: string;
+  owner: string;
+  description: string | null;
+  visibility: 'public' | 'private' | 'internal';
+  defaultBranch: string;
+  language: string | null;
+  license: string | null;
+  stars: number;
+  forks: number;
+  openIssues: number;
+  openPullRequests: number | null;
+  latestRelease: { name: string; tag: string; url: string; publishedAt: string | null } | null;
+  workflow: { name: string; status: string; conclusion: string | null; url: string } | null;
+  fetchedAt: number;
+  stale?: boolean;
+}
