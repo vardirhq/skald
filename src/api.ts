@@ -9,6 +9,9 @@ import type {
   SchemaName,
   VaultSettings,
   VaultSnapshot,
+  GitHubAuthStatus,
+  GitHubDeviceLogin,
+  GitHubRepositoryCard,
 } from '../src-shared/types';
 import type { TaskEdits } from '../src-shared/tasks';
 import type { PairingTicket, SyncDeviceInfo, SyncStatus } from '../src-shared/sync/types';
@@ -125,6 +128,16 @@ export const api = {
   syncSetEnabled: (enabled: boolean) => bridge().invoke('sync:setEnabled', enabled) as Promise<SyncStatus>,
   syncDisconnect: () => bridge().invoke('sync:disconnect') as Promise<SyncStatus>,
   onSyncChanged: (cb: (s: SyncStatus) => void) => bridge().onSyncChanged(cb as (s: unknown) => void),
+
+  // GitHub. Credentials never cross the preload boundary.
+  githubStatus: () => bridge().invoke('github:status') as Promise<GitHubAuthStatus>,
+  githubBeginLogin: () => bridge().invoke('github:login:begin') as Promise<GitHubDeviceLogin>,
+  githubCompleteLogin: () =>
+    bridge().invoke('github:login:complete') as Promise<GitHubAuthStatus>,
+  githubCancelLogin: () => bridge().invoke('github:login:cancel') as Promise<void>,
+  githubDisconnect: () => bridge().invoke('github:disconnect') as Promise<GitHubAuthStatus>,
+  githubRepository: (repo: string, force = false) =>
+    bridge().invoke('github:repository', repo, force) as Promise<GitHubRepositoryCard>,
 
   // window
   minimize: () => bridge().invoke('window:minimize') as Promise<void>,

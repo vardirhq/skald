@@ -47,6 +47,10 @@ it and your Markdown remains untouched.
 - **Tags & templates** — browse frontmatter, inline, and task tags in one pane; complete
   existing `#tags` while writing; and give each schema a body template with `{{title}}`
   and `{{date}}` placeholders.
+- **GitHub repository cards** — bind a project or any note with `github: owner/repo`, then
+  insert `> [!github]` for live repository, issue, pull request, release, and workflow
+  context. Public repositories need no account; optional GitHub App device login unlocks
+  private repositories without exposing tokens to the renderer. See [docs/github.md](docs/github.md).
 - **Pro tabs** — reorder and pin tabs, middle-click to close, or use the context menu to
   close other tabs and tabs to the right.
 - **Encrypted sync** — pair a second device and your vault follows, through
@@ -78,6 +82,9 @@ npm run electron:pack  # build distributables
 
 # smoke-test the sync client against a real GESH relay (skipped without the variable)
 GESH_URL=https://gesh.vardir.no npx vitest run tests/gesh-live.test.ts
+
+# optional private GitHub repository access (public cards need no configuration)
+SKALD_GITHUB_CLIENT_ID=... SKALD_GITHUB_APP_SLUG=... npm run electron:dev
 ```
 
 CI runs on pull requests and pushes to `main`:

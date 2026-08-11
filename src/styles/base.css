@@ -366,6 +366,12 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .editor-frontmatter .v .pill {
   font-family: var(--font-mono); font-size: 11.5px; color: var(--ac);
 }
+.editor-frontmatter .github-property { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.editor-frontmatter .github-property button {
+  border: 0; padding: 0; background: transparent; color: var(--ac); font: inherit;
+}
+.editor-frontmatter .github-property button:hover { text-decoration: underline; }
+.editor-frontmatter .github-property .muted { color: var(--tx-3); }
 
 /* body markdown */
 .editor-body { font-size: 15px; line-height: 1.72; color: var(--tx-1); }
@@ -439,6 +445,39 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
   font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--ac); margin-bottom: 6px;
 }
+
+.github-card {
+  margin: 22px 0; padding: 15px 16px; color: var(--tx-1);
+  background: var(--bg-1); border: 1px solid var(--line-2); border-radius: var(--r-3);
+  box-shadow: inset 3px 0 0 color-mix(in oklab, var(--tx-2) 55%, transparent);
+}
+.github-card__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.github-card__head > div { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.github-card__mark {
+  display: inline-grid; place-items: center; width: 25px; height: 25px; border-radius: 50%;
+  background: var(--tx-0); color: var(--bg-0); font: 700 9px var(--font-mono);
+}
+.github-card button { border: 0; background: transparent; padding: 0; }
+.github-card__repo { color: var(--tx-0); font-weight: 650; font-size: 14px; overflow: hidden; text-overflow: ellipsis; }
+.github-card__repo span { color: var(--tx-3); font-weight: 450; }
+.github-card__visibility {
+  padding: 1px 6px; border: 1px solid var(--line-2); border-radius: 12px;
+  color: var(--tx-3); font: 9.5px var(--font-mono); text-transform: uppercase;
+}
+.github-card__refresh { color: var(--tx-3); font: 10px var(--font-mono); }
+.github-card__refresh:hover { color: var(--ac); }
+.github-card p { margin: 11px 0 10px; color: var(--tx-2); font-size: 13px; }
+.github-card__stats, .github-card__detail { display: flex; flex-wrap: wrap; gap: 7px 14px; }
+.github-card__stats { color: var(--tx-2); font: 11px var(--font-mono); }
+.github-card__detail { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--tx-3); font: 10px var(--font-mono); }
+.github-card__detail button { color: var(--tx-3); font: inherit; }
+.github-card__detail button:hover { color: var(--ac); }
+.github-card__detail button[data-tone="good"] { color: var(--ok); }
+.github-card__detail button[data-tone="bad"] { color: var(--err); }
+.github-card__foot { margin-top: 9px; color: var(--tx-4); font: 9.5px var(--font-mono); }
+.github-card--quiet { color: var(--tx-3); font: 11px var(--font-mono); }
+.github-card--error { display: flex; flex-direction: column; gap: 7px; color: var(--err); box-shadow: inset 3px 0 0 var(--err); }
+.github-card--error button { align-self: flex-start; color: var(--ac); font: 11px var(--font-mono); }
 
 .editor-foot { margin-top: 36px; padding-top: 22px; border-top: 1px solid var(--line); }
 .editor-foot__label {

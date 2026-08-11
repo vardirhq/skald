@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added GitHub repository bindings and insertable live repository cards. Notes store a
+  portable `github: owner/repo` property, while `> [!github]` embeds repository metadata,
+  issue and pull-request counts, releases, and workflow state. Public repositories work
+  without an account. Optional GitHub App device login unlocks installed private
+  repositories; tokens stay in Electron's main process, encrypted by the OS keyring, and
+  private card data is never persisted to the public cache.
+
 - Added safe note and folder management inside Skald: move one or many notes, rename or
   move complete folders, and delete folders recursively. Drag-and-drop targets the same
   operations. Moves are validated as a batch and rewrite wikilinks against the original

@@ -14,7 +14,8 @@ import { api } from '../api';
 import { useStore, todayISO, relTime } from '../store';
 import { taskId } from '../../src-shared/tasks';
 import { countWords } from '../../src-shared/notes';
-import { parseFrontmatter } from '../../src-shared/frontmatter';
+import { parseFrontmatter, serializeFrontmatter } from '../../src-shared/frontmatter';
+import { githubRepoUrl, normalizeGitHubRepo } from '../../src-shared/github';
 import {
   enterInBlock,
   offsetAt,
@@ -52,6 +53,8 @@ export function EditorView({
   const [draft, setDraft] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [githubEditing, setGitHubEditing] = useState(false);
+  const [insertGitHubAfterBinding, setInsertGitHubAfterBinding] = useState(false);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [lncol, setLncol] = useState<[number, number] | null>(null);
   const [sourceTagRange, setSourceTagRange] = useState<TagCompletionRange | null>(null);
@@ -256,6 +259,7 @@ export function EditorView({
   const parsedContent = useMemo(() => parseFrontmatter(content), [content]);
   const body = parsedContent.body;
   const bodyStartLine = parsedContent.bodyStartLine;
+  const githubRepo = normalizeGitHubRepo(parsedContent.frontmatter['github']);
 
   const mdCtx: MdContext = {
     resolve: (target) => resolveLinkTarget(linkIndex, target),
@@ -269,10 +273,13 @@ export function EditorView({
     },
     todayISO: todayISO(),
     lineOffset: bodyStartLine,
+    githubRepo,
   };
 
   const noteTasks = snapshot.tasks.filter((t) => t.notePath === path);
-  const fmEntries = Object.entries(meta.frontmatter).filter(([k]) => k !== 'schema');
+  const fmEntries = Object.entries(parsedContent.frontmatter).filter(
+    ([k]) => k !== 'schema' && k !== 'github'
+  );
 
   const onSourceChange = (v: string) => {
     setDraft(v);
@@ -298,6 +305,38 @@ export function EditorView({
     setDraft(next);
     setDirtyStore(path, true);
     scheduleSave(next);
+  };
+
+  const setGitHubBinding = (repo: string | null, insertCard = false) => {
+    const frontmatter = { ...parsedContent.frontmatter };
+    if (repo) frontmatter.github = repo;
+    else delete frontmatter.github;
+    const marker = '> [!github]\n';
+    const nextBody = insertCard
+      ? `${body.replace(/\s*$/, '')}\n\n${marker}`
+      : body;
+    onSourceChange(serializeFrontmatter(frontmatter, nextBody));
+  };
+
+  const insertGitHubCard = () => {
+    if (!githubRepo) {
+      setInsertGitHubAfterBinding(true);
+      setGitHubEditing(true);
+      return;
+    }
+    if (mode === 'source' && taRef.current) {
+      const ta = taRef.current;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const marker = '> [!github]\n';
+      const prefix = start > 0 && content[start - 1] !== '\n' ? '\n\n' : '';
+      const suffix = end < content.length && content[end] !== '\n' ? '\n' : '';
+      const insertion = `${prefix}${marker}${suffix}`;
+      onSourceChange(content.slice(0, start) + insertion + content.slice(end));
+      requestAnimationFrame(() => ta.setSelectionRange(start + insertion.length, start + insertion.length));
+      return;
+    }
+    setGitHubBinding(githubRepo, true);
   };
 
   const updateLnCol = () => {
@@ -361,6 +400,13 @@ export function EditorView({
             >
               + attach
             </button>
+            <button
+              className="editor-attach-button"
+              title="Insert a live GitHub repository card"
+              onClick={insertGitHubCard}
+            >
+              + repo card
+            </button>
             <span className="editor-mode-toggle">
               <button aria-selected={mode === 'live'} onClick={() => setMode('live')} title="Live editor — ⌘E">
                 live
@@ -390,6 +436,20 @@ export function EditorView({
                 <div className="k">schema</div>
                 <div className="v">
                   <span className="pill">{meta.schema}</span>
+                </div>
+                <div className="k">github</div>
+                <div className="v github-property">
+                  {githubRepo ? (
+                    <>
+                      <button onClick={() => window.open(githubRepoUrl(githubRepo))}>{githubRepo}</button>
+                      <span className="muted">·</span>
+                      <button onClick={() => setGitHubEditing(true)}>edit</button>
+                      <span className="muted">·</span>
+                      <button onClick={() => setGitHubBinding(null)}>remove</button>
+                    </>
+                  ) : (
+                    <button onClick={() => setGitHubEditing(true)}>Connect repository…</button>
+                  )}
                 </div>
                 {fmEntries.map(([k, v]) => (
                   <FmRow key={k} k={k} v={v} ctx={mdCtx} />
@@ -657,6 +717,26 @@ export function EditorView({
             notePathRenamed(path, newPath);
           }}
           onClose={() => setRenaming(false)}
+        />
+      )}
+
+      {githubEditing && (
+        <TextDialog
+          title={githubRepo ? 'Change GitHub repository' : 'Connect GitHub repository'}
+          lede="Use owner/repository or paste a github.com URL. Public repositories need no sign-in."
+          label="Repository"
+          initial={githubRepo ?? ''}
+          submitLabel={insertGitHubAfterBinding ? 'Connect and insert' : 'Connect'}
+          onSubmit={async (value) => {
+            const repo = normalizeGitHubRepo(value);
+            if (!repo) throw new Error('Use owner/repository or a github.com repository URL');
+            setGitHubBinding(repo, insertGitHubAfterBinding);
+            setInsertGitHubAfterBinding(false);
+          }}
+          onClose={() => {
+            setGitHubEditing(false);
+            setInsertGitHubAfterBinding(false);
+          }}
         />
       )}
 
