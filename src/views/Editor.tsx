@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AttachmentImportResult,
   AttachmentRef,
@@ -15,7 +15,8 @@ import { useStore, todayISO, relTime } from '../store';
 import { taskId } from '../../src-shared/tasks';
 import { countWords } from '../../src-shared/notes';
 import { parseFrontmatter, serializeFrontmatter } from '../../src-shared/frontmatter';
-import { githubRepoUrl, normalizeGitHubRepo } from '../../src-shared/github';
+import { extensionRegistry } from '../extensions/registry';
+import type { EditorInsertContribution, NotePropertyContribution } from '../extensions/types';
 import {
   enterInBlock,
   offsetAt,
@@ -31,6 +32,8 @@ import { buildLinkIndex, resolveLinkTarget } from '../../src-shared/wikilinks';
 import { completeTag, matchingTags, tagCompletionAt, type TagCompletionRange } from '../../src-shared/tags';
 
 type EditorMode = 'live' | 'preview' | 'source';
+
+const extensionPropertyKeys = new Set(extensionRegistry.noteProperties.map((item) => item.key));
 
 export function EditorView({
   snapshot,
@@ -53,8 +56,8 @@ export function EditorView({
   const [draft, setDraft] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [githubEditing, setGitHubEditing] = useState(false);
-  const [insertGitHubAfterBinding, setInsertGitHubAfterBinding] = useState(false);
+  const [editingExtensionProperty, setEditingExtensionProperty] = useState<string | null>(null);
+  const [pendingExtensionInsertion, setPendingExtensionInsertion] = useState<string | null>(null);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [lncol, setLncol] = useState<[number, number] | null>(null);
   const [sourceTagRange, setSourceTagRange] = useState<TagCompletionRange | null>(null);
@@ -259,7 +262,6 @@ export function EditorView({
   const parsedContent = useMemo(() => parseFrontmatter(content), [content]);
   const body = parsedContent.body;
   const bodyStartLine = parsedContent.bodyStartLine;
-  const githubRepo = normalizeGitHubRepo(parsedContent.frontmatter['github']);
 
   const mdCtx: MdContext = {
     resolve: (target) => resolveLinkTarget(linkIndex, target),
@@ -273,12 +275,12 @@ export function EditorView({
     },
     todayISO: todayISO(),
     lineOffset: bodyStartLine,
-    githubRepo,
+    frontmatter: parsedContent.frontmatter,
   };
 
   const noteTasks = snapshot.tasks.filter((t) => t.notePath === path);
   const fmEntries = Object.entries(parsedContent.frontmatter).filter(
-    ([k]) => k !== 'schema' && k !== 'github'
+    ([k]) => k !== 'schema' && !extensionPropertyKeys.has(k)
   );
 
   const onSourceChange = (v: string) => {
@@ -307,37 +309,50 @@ export function EditorView({
     scheduleSave(next);
   };
 
-  const setGitHubBinding = (repo: string | null, insertCard = false) => {
+  const setExtensionProperty = (
+    property: NotePropertyContribution,
+    value: string | null,
+    insertion?: EditorInsertContribution
+  ) => {
     const frontmatter = { ...parsedContent.frontmatter };
-    if (repo) frontmatter.github = repo;
-    else delete frontmatter.github;
-    const marker = '> [!github]\n';
-    const nextBody = insertCard
-      ? `${body.replace(/\s*$/, '')}\n\n${marker}`
+    if (value) frontmatter[property.key] = value;
+    else delete frontmatter[property.key];
+    const nextBody = insertion
+      ? `${body.replace(/\s*$/, '')}\n\n${insertion.markdown}`
       : body;
     onSourceChange(serializeFrontmatter(frontmatter, nextBody));
   };
 
-  const insertGitHubCard = () => {
-    if (!githubRepo) {
-      setInsertGitHubAfterBinding(true);
-      setGitHubEditing(true);
-      return;
+  const insertExtension = (insertion: EditorInsertContribution) => {
+    if (insertion.propertyKey) {
+      const property = extensionRegistry.noteProperty(insertion.propertyKey);
+      if (!property) throw new Error(`Missing extension property ${insertion.propertyKey}`);
+      if (!property.normalize(parsedContent.frontmatter[property.key])) {
+        setPendingExtensionInsertion(insertion.id);
+        setEditingExtensionProperty(property.key);
+        return;
+      }
     }
     if (mode === 'source' && taRef.current) {
       const ta = taRef.current;
       const start = ta.selectionStart;
       const end = ta.selectionEnd;
-      const marker = '> [!github]\n';
       const prefix = start > 0 && content[start - 1] !== '\n' ? '\n\n' : '';
       const suffix = end < content.length && content[end] !== '\n' ? '\n' : '';
-      const insertion = `${prefix}${marker}${suffix}`;
-      onSourceChange(content.slice(0, start) + insertion + content.slice(end));
-      requestAnimationFrame(() => ta.setSelectionRange(start + insertion.length, start + insertion.length));
+      const markdown = `${prefix}${insertion.markdown}${suffix}`;
+      onSourceChange(content.slice(0, start) + markdown + content.slice(end));
+      requestAnimationFrame(() => ta.setSelectionRange(start + markdown.length, start + markdown.length));
       return;
     }
-    setGitHubBinding(githubRepo, true);
+    onBodyChange(`${body.replace(/\s*$/, '')}\n\n${insertion.markdown}`);
   };
+
+  const activeExtensionProperty = editingExtensionProperty
+    ? extensionRegistry.noteProperty(editingExtensionProperty)
+    : undefined;
+  const activeExtensionInsertion = pendingExtensionInsertion
+    ? extensionRegistry.editorInsertion(pendingExtensionInsertion)
+    : undefined;
 
   const updateLnCol = () => {
     const ta = taRef.current;
@@ -400,13 +415,16 @@ export function EditorView({
             >
               + attach
             </button>
-            <button
-              className="editor-attach-button"
-              title="Insert a live GitHub repository card"
-              onClick={insertGitHubCard}
-            >
-              + repo card
-            </button>
+            {extensionRegistry.editorInsertions.map((insertion) => (
+              <button
+                key={insertion.id}
+                className="editor-attach-button"
+                title={insertion.title}
+                onClick={() => insertExtension(insertion)}
+              >
+                {insertion.label}
+              </button>
+            ))}
             <span className="editor-mode-toggle">
               <button aria-selected={mode === 'live'} onClick={() => setMode('live')} title="Live editor — ⌘E">
                 live
@@ -437,20 +455,31 @@ export function EditorView({
                 <div className="v">
                   <span className="pill">{meta.schema}</span>
                 </div>
-                <div className="k">github</div>
-                <div className="v github-property">
-                  {githubRepo ? (
-                    <>
-                      <button onClick={() => window.open(githubRepoUrl(githubRepo))}>{githubRepo}</button>
-                      <span className="muted">·</span>
-                      <button onClick={() => setGitHubEditing(true)}>edit</button>
-                      <span className="muted">·</span>
-                      <button onClick={() => setGitHubBinding(null)}>remove</button>
-                    </>
-                  ) : (
-                    <button onClick={() => setGitHubEditing(true)}>Connect repository…</button>
-                  )}
-                </div>
+                {extensionRegistry.noteProperties.map((property) => {
+                  const value = property.normalize(parsedContent.frontmatter[property.key]);
+                  return (
+                    <Fragment key={property.key}>
+                      <div className="k">{property.label}</div>
+                      <div className="v extension-property">
+                        {value ? (
+                          <>
+                            {property.externalUrl ? (
+                              <button onClick={() => window.open(property.externalUrl!(value))}>{value}</button>
+                            ) : (
+                              <span>{value}</span>
+                            )}
+                            <span className="muted">·</span>
+                            <button onClick={() => setEditingExtensionProperty(property.key)}>edit</button>
+                            <span className="muted">·</span>
+                            <button onClick={() => setExtensionProperty(property, null)}>remove</button>
+                          </>
+                        ) : (
+                          <button onClick={() => setEditingExtensionProperty(property.key)}>{property.emptyLabel}</button>
+                        )}
+                      </div>
+                    </Fragment>
+                  );
+                })}
                 {fmEntries.map(([k, v]) => (
                   <FmRow key={k} k={k} v={v} ctx={mdCtx} />
                 ))}
@@ -720,22 +749,26 @@ export function EditorView({
         />
       )}
 
-      {githubEditing && (
+      {activeExtensionProperty && (
         <TextDialog
-          title={githubRepo ? 'Change GitHub repository' : 'Connect GitHub repository'}
-          lede="Use owner/repository or paste a github.com URL. Public repositories need no sign-in."
-          label="Repository"
-          initial={githubRepo ?? ''}
-          submitLabel={insertGitHubAfterBinding ? 'Connect and insert' : 'Connect'}
+          title={activeExtensionProperty.dialogTitle(
+            !!activeExtensionProperty.normalize(parsedContent.frontmatter[activeExtensionProperty.key])
+          )}
+          lede={activeExtensionProperty.dialogLede}
+          label={activeExtensionProperty.inputLabel}
+          initial={activeExtensionProperty.normalize(parsedContent.frontmatter[activeExtensionProperty.key]) ?? ''}
+          submitLabel={activeExtensionInsertion
+            ? `${activeExtensionProperty.submitLabel} and insert`
+            : activeExtensionProperty.submitLabel}
           onSubmit={async (value) => {
-            const repo = normalizeGitHubRepo(value);
-            if (!repo) throw new Error('Use owner/repository or a github.com repository URL');
-            setGitHubBinding(repo, insertGitHubAfterBinding);
-            setInsertGitHubAfterBinding(false);
+            const normalized = activeExtensionProperty.normalize(value);
+            if (!normalized) throw new Error(`Invalid ${activeExtensionProperty.label} value`);
+            setExtensionProperty(activeExtensionProperty, normalized, activeExtensionInsertion);
+            setPendingExtensionInsertion(null);
           }}
           onClose={() => {
-            setGitHubEditing(false);
-            setInsertGitHubAfterBinding(false);
+            setEditingExtensionProperty(null);
+            setPendingExtensionInsertion(null);
           }}
         />
       )}
