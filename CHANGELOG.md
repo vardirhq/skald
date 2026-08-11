@@ -7,6 +7,28 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added explorer context menus that know what they are pointing at. Right-clicking a
+  folder can expand or collapse its subfolders, collapse everything else in the vault so
+  one branch stands alone, open every note it holds, and copy its notes as a list of
+  wikilinks ready to paste into an index note. Right-clicking a note copies its wikilink
+  or its path, and reveals the Markdown file itself in the file manager. Right-clicking
+  the empty space around the tree acts on the vault: new note, new folder, expand or
+  collapse every folder at once.
+- Menu items that would do nothing are not offered: "Expand subfolders" only appears
+  while something below is collapsed, "Collapse everything else" only while something
+  else is open, and folders with no notes do not offer to open them. Counts sit beside
+  the items that act on many things at once, and opening a folder of more than twelve
+  notes asks before filling the tab strip.
+
+### Changed
+
+- Explorer folders now remember what you collapsed while you visit the tasks or graph
+  panes, instead of springing open again on the way back. Opening a note from search, a
+  wikilink or a tab expands the folders leading to it, so the tree always shows where
+  you are.
+
 ## [2.2.0] - 2026-08-10
 
 ### Added

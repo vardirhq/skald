@@ -6,8 +6,20 @@ export interface CtxItem {
   icon?: string;
   danger?: boolean;
   sep?: boolean;
+  /** Muted text on the right — a count, a shortcut, a target. */
+  hint?: string;
+  disabled?: boolean;
   onClick?: () => void;
 }
+
+/** Drops falsy entries so menus can be built with inline conditions. */
+export function ctxItems(...items: (CtxItem | false | null | undefined)[]): CtxItem[] {
+  const out = items.filter((i): i is CtxItem => Boolean(i));
+  // A separator is only a separator when it has something on both sides.
+  return out.filter((it, i) => !it.sep || (i > 0 && i < out.length - 1 && !out[i - 1].sep));
+}
+
+export const CTX_SEP: CtxItem = { sep: true, label: '' };
 
 export interface CtxState {
   x: number;
@@ -63,13 +75,15 @@ export function ContextMenu({ ctx, onClose }: { ctx: CtxState; onClose: () => vo
           <button
             key={i}
             className={it.danger ? 'danger' : undefined}
+            disabled={it.disabled}
             onClick={() => {
               onClose();
               it.onClick?.();
             }}
           >
-            {it.icon && <Icon name={it.icon} size={14} />}
-            {it.label}
+            {it.icon ? <Icon name={it.icon} size={14} /> : <span className="ctx-menu__gap" />}
+            <span className="ctx-menu__label">{it.label}</span>
+            {it.hint && <span className="ctx-menu__hint">{it.hint}</span>}
           </button>
         )
       )}

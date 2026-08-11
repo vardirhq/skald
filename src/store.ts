@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { VaultSnapshot } from '../src-shared/types';
+import type { FolderOpenState } from './chrome/tree';
+import { ancestorFolderPaths, expansionPatch, isFolderOpen } from './chrome/tree';
 import { api } from './api';
 
 export type View =
@@ -28,6 +30,8 @@ interface SkaldState {
   dirtyPaths: Record<string, boolean>;
   switcherOpen: boolean;
   toast: string | null;
+  /** Explorer folders that have been deliberately collapsed or expanded. */
+  folderOpen: FolderOpenState;
   docStatus: { schema?: string; words?: number; lncol?: [number, number] | null };
   setDocStatus: (d: { schema?: string; words?: number; lncol?: [number, number] | null }) => void;
 
@@ -38,7 +42,10 @@ interface SkaldState {
 
   setView: (v: View) => void;
   openNote: (path: string) => void;
+  openNotes: (paths: string[]) => void;
   openLogbook: () => void;
+  toggleFolder: (path: string) => void;
+  setFoldersOpen: (patch: FolderOpenState) => void;
   closeTab: (id: string) => void;
   setDirty: (path: string, dirty: boolean) => void;
   notePathRenamed: (oldPath: string, newPath: string) => void;
@@ -57,6 +64,7 @@ export const useStore = create<SkaldState>((set, get) => ({
   dirtyPaths: {},
   switcherOpen: false,
   toast: null,
+  folderOpen: {},
   docStatus: {},
   setDocStatus: (d) => set({ docStatus: d }),
 
@@ -84,6 +92,7 @@ export const useStore = create<SkaldState>((set, get) => ({
       tabs: [{ kind: 'logbook', id: 'today' }],
       selectedPath: null,
       dirtyPaths: {},
+      folderOpen: {},
     });
   },
 
@@ -104,12 +113,42 @@ export const useStore = create<SkaldState>((set, get) => ({
   setView: (v) => set({ view: v }),
 
   openNote: (path) => {
-    const { tabs } = get();
+    const { tabs, folderOpen } = get();
     const next = tabs.some((t) => t.id === path)
       ? tabs
       : [...tabs, { kind: 'editor' as const, id: path }];
-    set({ tabs: next, selectedPath: path, view: 'editor' });
+    set({
+      tabs: next,
+      selectedPath: path,
+      view: 'editor',
+      // A note opened from search or a wikilink is worth seeing in the tree,
+      // even when its folder was collapsed.
+      folderOpen: { ...folderOpen, ...expansionPatch(ancestorFolderPaths(path), true) },
+    });
   },
+
+  openNotes: (paths) => {
+    if (!paths.length) return;
+    const { tabs, folderOpen } = get();
+    const known = new Set(tabs.map((t) => t.id));
+    const added = paths
+      .filter((p) => !known.has(p))
+      .map((p) => ({ kind: 'editor' as const, id: p }));
+    set({
+      tabs: [...tabs, ...added],
+      selectedPath: paths[0],
+      view: 'editor',
+      folderOpen: { ...folderOpen, ...expansionPatch(ancestorFolderPaths(paths[0]), true) },
+    });
+  },
+
+  toggleFolder: (path) =>
+    set((st) => ({
+      folderOpen: { ...st.folderOpen, [path]: !isFolderOpen(st.folderOpen, path) },
+    })),
+
+  setFoldersOpen: (patch) =>
+    set((st) => ({ folderOpen: { ...st.folderOpen, ...patch } })),
 
   openLogbook: () => {
     const { tabs } = get();
