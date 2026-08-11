@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { VaultSnapshot, VaultSettings } from '../../src-shared/types';
+import type { SchemaName, VaultSnapshot, VaultSettings } from '../../src-shared/types';
 import { SCHEMA_NAMES } from '../../src-shared/types';
 import { Rune, schemaTone } from '../ui/runes';
 import { Logo, type LogoVariant } from '../ui/logo';
@@ -33,7 +33,7 @@ export function SettingsView({ snapshot }: { snapshot: VaultSnapshot }) {
         {pane === 'appearance' && <AppearancePane s={s} set={set} />}
         {pane === 'themes' && <ThemesPane s={s} set={set} />}
         {pane === 'editor' && <EditorPane s={s} set={set} snapshot={snapshot} />}
-        {pane === 'schemas' && <SchemasPane snapshot={snapshot} />}
+        {pane === 'schemas' && <SchemasPane snapshot={snapshot} s={s} set={set} />}
         {pane === 'vault' && <VaultPane snapshot={snapshot} s={s} set={set} />}
         {pane === 'sync' && <SyncPane />}
         {pane === 'shortcuts' && <ShortcutsPane />}
@@ -257,7 +257,18 @@ function EditorPane({
   );
 }
 
-function SchemasPane({ snapshot }: { snapshot: VaultSnapshot }) {
+function SchemasPane({
+  snapshot,
+  s,
+  set,
+}: {
+  snapshot: VaultSnapshot;
+  s: VaultSettings;
+  set: (patch: Partial<VaultSettings>) => void;
+}) {
+  const [active, setActive] = useState<SchemaName>('Note');
+  const [draft, setDraft] = useState(s.schemaTemplates.Note ?? '');
+  useEffect(() => setDraft(s.schemaTemplates[active] ?? ''), [active, s.schemaTemplates]);
   const counts = useMemo(() => {
     const map = new Map<string, number>();
     for (const n of snapshot.notes) map.set(n.schema, (map.get(n.schema) ?? 0) + 1);
@@ -273,15 +284,45 @@ function SchemasPane({ snapshot }: { snapshot: VaultSnapshot }) {
       </p>
       <div className="set-table">
         {SCHEMA_NAMES.map((n) => (
-          <div key={n} className="row" style={{ gridTemplateColumns: '32px 150px 1fr auto' }}>
+          <button
+            key={n}
+            className="row schema-setting-row"
+            aria-selected={active === n}
+            style={{ gridTemplateColumns: '32px 150px 1fr auto' }}
+            onClick={() => setActive(n)}
+          >
             <span className="schema-rune" style={{ color: schemaTone(n) }}>
               <Rune schema={n} size={18} />
             </span>
             <span style={{ fontWeight: 600, color: 'var(--tx-0)' }}>{n}</span>
             <span style={{ color: 'var(--tx-3)', fontSize: 13 }}>{SCHEMA_DESC[n]}</span>
             <span className="tree__count">{counts.get(n) ?? 0} notes</span>
-          </div>
+          </button>
         ))}
+      </div>
+      <div className="schema-template-editor">
+        <div className="schema-template-editor__head">
+          <div>
+            <h3>{active} template</h3>
+            <p>Inserted into the body of each new {active.toLocaleLowerCase()} note. Use <code>{'{{title}}'}</code> and <code>{'{{date}}'}</code>.</p>
+          </div>
+          <div className="schema-template-editor__actions">
+            <button className="btn btn--ghost" disabled={!draft} onClick={() => setDraft('')}>Clear</button>
+            <button
+              className="btn btn--accent"
+              disabled={draft === (s.schemaTemplates[active] ?? '')}
+              onClick={() => set({ schemaTemplates: { ...s.schemaTemplates, [active]: draft } })}
+            >
+              Save template
+            </button>
+          </div>
+        </div>
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={`# {{title}}\n\nCreated {{date}}.`}
+          spellCheck={false}
+        />
       </div>
     </>
   );

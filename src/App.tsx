@@ -11,6 +11,9 @@ import { TasksView } from './views/Tasks';
 import { ConstellationView } from './views/Graph';
 import { SettingsView } from './views/Settings';
 import { Switcher } from './views/Switcher';
+import { SearchView } from './views/Search';
+import { TrashView } from './views/Trash';
+import { TagsView } from './views/Tags';
 import { VaultPicker } from './views/VaultPicker';
 import { NewNoteDialog } from './ui/dialogs';
 import { api } from './api';
@@ -99,6 +102,12 @@ export default function App() {
             ]
           : view === 'graph'
             ? [snapshot.vaultName, 'Graph']
+            : view === 'search'
+              ? [snapshot.vaultName, 'Search']
+            : view === 'trash'
+              ? [snapshot.vaultName, 'Recently deleted']
+            : view === 'tags'
+              ? [snapshot.vaultName, 'Tags']
             : [snapshot.vaultName, 'Settings'];
 
   const fullBleed = view === 'settings';
@@ -135,6 +144,9 @@ export default function App() {
             {view === 'logbook' && <LogbookView snapshot={snapshot} />}
             {view.startsWith('tasks') && <TasksView snapshot={snapshot} view={view} />}
             {view === 'graph' && <ConstellationView snapshot={snapshot} />}
+            {view === 'search' && <SearchView snapshot={snapshot} />}
+            {view === 'trash' && <TrashView />}
+            {view === 'tags' && <TagsView snapshot={snapshot} />}
             {fullBleed && <SettingsView snapshot={snapshot} />}
           </div>
         </main>

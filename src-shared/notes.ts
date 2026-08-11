@@ -94,3 +94,7 @@ export function localISO(d: Date): string {
 export function safeFileName(title: string): string {
   return title.replace(/[<>:"|?*\\/\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
 }
+
+export function renderSchemaTemplate(template: string, title: string, date: string): string {
+  return template.replace(/\{\{\s*title\s*\}\}/gi, title).replace(/\{\{\s*date\s*\}\}/gi, date);
+}

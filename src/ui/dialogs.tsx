@@ -198,3 +198,56 @@ export function ConfirmDialog({
     </DialogScrim>
   );
 }
+
+export function FolderDialog({
+  title,
+  lede,
+  folders,
+  initial = '',
+  submitLabel,
+  onSubmit,
+  onClose,
+}: {
+  title: string;
+  lede: string;
+  folders: string[];
+  initial?: string;
+  submitLabel: string;
+  onSubmit: (folder: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [folder, setFolder] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onSubmit(folder);
+      onClose();
+    } catch (err) {
+      setError(String((err as Error).message ?? err));
+      setBusy(false);
+    }
+  };
+  return (
+    <DialogScrim onClose={onClose}>
+      <h2>{title}</h2>
+      <p className="lede">{lede}</p>
+      <label>Destination</label>
+      <select value={folder} onChange={(e) => setFolder(e.target.value)} autoFocus>
+        <option value="">vault root</option>
+        {folders.map((item) => (
+          <option key={item} value={item}>{item}</option>
+        ))}
+      </select>
+      {error && <div className="dialog__error">{error}</div>}
+      <div className="dialog__actions">
+        <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn--accent" onClick={() => void submit()} disabled={busy}>
+          {busy ? 'Moving…' : submitLabel}
+        </button>
+      </div>
+    </DialogScrim>
+  );
+}

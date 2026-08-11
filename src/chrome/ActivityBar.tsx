@@ -2,9 +2,10 @@ import { Icon } from '../ui/icons';
 import { useStore, type View } from '../store';
 
 export function activityFor(view: View): string {
-  if (view === 'logbook' || view === 'editor') return 'explorer';
+  if (view === 'logbook' || view === 'editor' || view === 'trash' || view === 'tags') return 'explorer';
   if (view.startsWith('tasks')) return 'tasks';
   if (view === 'graph') return 'graph';
+  if (view === 'search') return 'search';
   if (view === 'settings') return 'settings';
   return 'explorer';
 }
@@ -12,12 +13,11 @@ export function activityFor(view: View): string {
 export function ActivityBar() {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
-  const setSwitcherOpen = useStore((s) => s.setSwitcherOpen);
   const activity = activityFor(view);
 
   const items = [
     { id: 'explorer', icon: 'files', label: 'Explorer', go: () => setView(view === 'settings' || view === 'graph' || view.startsWith('tasks') ? 'logbook' : view) },
-    { id: 'search', icon: 'search', label: 'Search — ⌘K', go: () => setSwitcherOpen(true), never: true },
+    { id: 'search', icon: 'search', label: 'Full-text search', go: () => setView('search') },
     { id: 'tasks', icon: 'tasks', label: 'Tasks', go: () => setView('tasks-table') },
     { id: 'graph', icon: 'graph', label: 'Graph — ⌘G', go: () => setView('graph') },
   ];
@@ -28,7 +28,7 @@ export function ActivityBar() {
         {items.map((it) => (
           <button
             key={it.id}
-            className={'act' + (!it.never && activity === it.id ? ' is-active' : '')}
+            className={'act' + (activity === it.id ? ' is-active' : '')}
             title={it.label}
             onClick={it.go}
           >

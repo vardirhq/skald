@@ -7,6 +7,7 @@ import {
   excerptOf,
   countWords,
   safeFileName,
+  renderSchemaTemplate,
 } from '../src-shared/notes';
 import { fuzzyMatch } from '../src-shared/fuzzy';
 import { layoutGraph } from '../src-main/layout';
@@ -51,6 +52,11 @@ describe('note utilities', () => {
   });
   it('sanitizes file names', () => {
     expect(safeFileName('a/b: c?')).toBe('a b c');
+  });
+  it('renders schema template placeholders case-insensitively', () => {
+    expect(renderSchemaTemplate('# {{ title }}\n\nStarted {{DATE}}.', 'Skald', '2026-08-11')).toBe(
+      '# Skald\n\nStarted 2026-08-11.'
+    );
   });
 });
 

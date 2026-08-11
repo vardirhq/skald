@@ -166,7 +166,11 @@ function registerIpc() {
   ipcMain.handle('note:rename', (_e, path: string, newTitle: string) =>
     requireVault().renameNote(path, newTitle)
   );
+  ipcMain.handle('note:moveMany', (_e, paths: string[], folder: string) =>
+    requireVault().moveNotes(paths, folder)
+  );
   ipcMain.handle('note:delete', (_e, path: string) => requireVault().deleteNote(path));
+  ipcMain.handle('note:deleteMany', (_e, paths: string[]) => requireVault().deleteNotes(paths));
   ipcMain.handle('note:history:list', (_e, path: string) => requireVault().listNoteHistory(path));
   ipcMain.handle('note:history:read', (_e, path: string, id: string) =>
     requireVault().readNoteHistoryVersion(path, id)
@@ -175,6 +179,16 @@ function registerIpc() {
     requireVault().restoreNoteHistoryVersion(path, id)
   );
   ipcMain.handle('folder:create', (_e, path: string) => requireVault().createFolder(path));
+  ipcMain.handle('folder:move', (_e, path: string, parent: string) =>
+    requireVault().moveFolder(path, parent)
+  );
+  ipcMain.handle('folder:rename', (_e, path: string, name: string) =>
+    requireVault().renameFolder(path, name)
+  );
+  ipcMain.handle('folder:delete', (_e, path: string) => requireVault().deleteFolder(path));
+  ipcMain.handle('search:query', (_e, query: string) => requireVault().search(query));
+  ipcMain.handle('trash:list', () => requireVault().listDeletedNotes());
+  ipcMain.handle('trash:restore', (_e, path: string) => requireVault().restoreDeletedNote(path));
 
   // ----- attachments -----
   ipcMain.handle('attachment:select', async (_e, notePath: string) => {

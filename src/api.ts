@@ -2,6 +2,9 @@ import type {
   NotePayload,
   NoteHistoryEntry,
   NoteHistoryVersion,
+  PathChange,
+  SearchResult,
+  DeletedNoteEntry,
   AttachmentImportResult,
   SchemaName,
   VaultSettings,
@@ -60,7 +63,10 @@ export const api = {
   createDailyNote: () => bridge().invoke('note:createDaily') as Promise<string>,
   renameNote: (path: string, newTitle: string) =>
     bridge().invoke('note:rename', path, newTitle) as Promise<string>,
+  moveNotes: (paths: string[], folder: string) =>
+    bridge().invoke('note:moveMany', paths, folder) as Promise<PathChange[]>,
   deleteNote: (path: string) => bridge().invoke('note:delete', path) as Promise<void>,
+  deleteNotes: (paths: string[]) => bridge().invoke('note:deleteMany', paths) as Promise<void>,
   listNoteHistory: (path: string) =>
     bridge().invoke('note:history:list', path) as Promise<NoteHistoryEntry[]>,
   readNoteHistoryVersion: (path: string, id: string) =>
@@ -68,6 +74,14 @@ export const api = {
   restoreNoteHistoryVersion: (path: string, id: string) =>
     bridge().invoke('note:history:restore', path, id) as Promise<void>,
   createFolder: (path: string) => bridge().invoke('folder:create', path) as Promise<void>,
+  moveFolder: (path: string, parent: string) =>
+    bridge().invoke('folder:move', path, parent) as Promise<PathChange[]>,
+  renameFolder: (path: string, name: string) =>
+    bridge().invoke('folder:rename', path, name) as Promise<PathChange[]>,
+  deleteFolder: (path: string) => bridge().invoke('folder:delete', path) as Promise<void>,
+  search: (query: string) => bridge().invoke('search:query', query) as Promise<SearchResult[]>,
+  listDeletedNotes: () => bridge().invoke('trash:list') as Promise<DeletedNoteEntry[]>,
+  restoreDeletedNote: (path: string) => bridge().invoke('trash:restore', path) as Promise<void>,
 
   // attachments
   selectAttachments: (notePath: string) =>

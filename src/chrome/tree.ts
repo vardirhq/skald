@@ -7,6 +7,10 @@ import type { FolderNode } from '../../src-shared/types';
 
 export type FolderOpenState = Record<string, boolean>;
 
+export type VisibleTreeItem =
+  | { kind: 'folder'; path: string; label: string; depth: number }
+  | { kind: 'note'; path: string; label: string; depth: number };
+
 export function isFolderOpen(state: FolderOpenState, path: string): boolean {
   return state[path] ?? true;
 }
@@ -87,4 +91,24 @@ export function someCollapsed(state: FolderOpenState, paths: string[]): boolean 
 /** True when at least one of `paths` is currently expanded. */
 export function someExpanded(state: FolderOpenState, paths: string[]): boolean {
   return paths.some((p) => isFolderOpen(state, p));
+}
+
+/** Rows currently reachable with the keyboard, in the same order as rendered. */
+export function visibleTreeItems(
+  root: FolderNode,
+  state: FolderOpenState,
+  noteLabels: Map<string, string>
+): VisibleTreeItem[] {
+  const out: VisibleTreeItem[] = [];
+  const walk = (node: FolderNode, depth: number) => {
+    for (const folder of node.folders) {
+      out.push({ kind: 'folder', path: folder.path, label: folder.name, depth });
+      if (isFolderOpen(state, folder.path)) walk(folder, depth + 1);
+    }
+    for (const path of node.notes) {
+      out.push({ kind: 'note', path, label: noteLabels.get(path) ?? path, depth });
+    }
+  };
+  walk(root, 0);
+  return out;
 }
