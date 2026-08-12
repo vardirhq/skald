@@ -65,6 +65,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Explorer folder expansion now persists per vault on each device. Restarting Skald or
+  switching away and back restores the exact open/closed hierarchy; renamed and moved
+  folders keep their state, deleted branches are removed, and opening a note still expands
+  its ancestor folders so the selection remains visible.
+
 - Explorer folders now remember what you collapsed while you visit the tasks or graph
   panes, instead of springing open again on the way back. Opening a note from search, a
   wikilink or a tab expands the folders leading to it, so the tree always shows where

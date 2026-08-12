@@ -2,6 +2,14 @@ import { create } from 'zustand';
 import type { PathChange, VaultSnapshot } from '../src-shared/types';
 import type { FolderOpenState } from './chrome/tree';
 import { ancestorFolderPaths, expansionPatch, isFolderOpen } from './chrome/tree';
+import { allFolders } from './chrome/tree';
+import {
+  loadExplorerState,
+  moveExplorerFolder,
+  removeExplorerFolder,
+  rendererStorage,
+  saveExplorerState,
+} from './chrome/explorerState';
 import { idsToCloseOthers, idsToCloseRight, pinTab, reorderTabs, type Tab } from './chrome/tabs';
 import { api } from './api';
 
@@ -58,6 +66,8 @@ interface SkaldState {
   setDirty: (path: string, dirty: boolean) => void;
   notePathRenamed: (oldPath: string, newPath: string) => void;
   pathsChanged: (changes: PathChange[]) => void;
+  folderPathChanged: (oldPath: string, newPath: string) => void;
+  folderDeleted: (path: string) => void;
   setSwitcherOpen: (open: boolean) => void;
   showToast: (msg: string) => void;
   setSearchQuery: (query: string) => void;
@@ -92,7 +102,15 @@ export const useStore = create<SkaldState>((set, get) => ({
     }
     try {
       const snapshot = await api.openVault(last);
-      set({ phase: 'ready', snapshot });
+      set({
+        phase: 'ready',
+        snapshot,
+        folderOpen: loadExplorerState(
+          rendererStorage(),
+          snapshot.vaultPath,
+          allFolders(snapshot.tree).map((folder) => folder.path)
+        ),
+      });
     } catch {
       set({ phase: 'picker' });
     }
@@ -107,7 +125,11 @@ export const useStore = create<SkaldState>((set, get) => ({
       tabs: [{ kind: 'logbook', id: 'today' }],
       selectedPath: null,
       dirtyPaths: {},
-      folderOpen: {},
+      folderOpen: loadExplorerState(
+        rendererStorage(),
+        snapshot.vaultPath,
+        allFolders(snapshot.tree).map((folder) => folder.path)
+      ),
     });
   },
 
@@ -128,18 +150,20 @@ export const useStore = create<SkaldState>((set, get) => ({
   setView: (v) => set({ view: v }),
 
   openNote: (path) => {
-    const { tabs, folderOpen } = get();
+    const { tabs, folderOpen, snapshot } = get();
     const next = tabs.some((t) => t.id === path)
       ? tabs
       : [...tabs, { kind: 'editor' as const, id: path }];
+    const nextFolderOpen = { ...folderOpen, ...expansionPatch(ancestorFolderPaths(path), true) };
     set({
       tabs: next,
       selectedPath: path,
       view: 'editor',
       // A note opened from search or a wikilink is worth seeing in the tree,
       // even when its folder was collapsed.
-      folderOpen: { ...folderOpen, ...expansionPatch(ancestorFolderPaths(path), true) },
+      folderOpen: nextFolderOpen,
     });
+    if (snapshot) saveExplorerState(rendererStorage(), snapshot.vaultPath, nextFolderOpen);
   },
 
   openNoteAt: (path, line, column, length) => {
@@ -149,26 +173,34 @@ export const useStore = create<SkaldState>((set, get) => ({
 
   openNotes: (paths) => {
     if (!paths.length) return;
-    const { tabs, folderOpen } = get();
+    const { tabs, folderOpen, snapshot } = get();
     const known = new Set(tabs.map((t) => t.id));
     const added = paths
       .filter((p) => !known.has(p))
       .map((p) => ({ kind: 'editor' as const, id: p }));
+    const nextFolderOpen = { ...folderOpen, ...expansionPatch(ancestorFolderPaths(paths[0]), true) };
     set({
       tabs: [...tabs, ...added],
       selectedPath: paths[0],
       view: 'editor',
-      folderOpen: { ...folderOpen, ...expansionPatch(ancestorFolderPaths(paths[0]), true) },
+      folderOpen: nextFolderOpen,
     });
+    if (snapshot) saveExplorerState(rendererStorage(), snapshot.vaultPath, nextFolderOpen);
   },
 
-  toggleFolder: (path) =>
-    set((st) => ({
-      folderOpen: { ...st.folderOpen, [path]: !isFolderOpen(st.folderOpen, path) },
-    })),
+  toggleFolder: (path) => {
+    const { folderOpen, snapshot } = get();
+    const next = { ...folderOpen, [path]: !isFolderOpen(folderOpen, path) };
+    set({ folderOpen: next });
+    if (snapshot) saveExplorerState(rendererStorage(), snapshot.vaultPath, next);
+  },
 
-  setFoldersOpen: (patch) =>
-    set((st) => ({ folderOpen: { ...st.folderOpen, ...patch } })),
+  setFoldersOpen: (patch) => {
+    const { folderOpen, snapshot } = get();
+    const next = { ...folderOpen, ...patch };
+    set({ folderOpen: next });
+    if (snapshot) saveExplorerState(rendererStorage(), snapshot.vaultPath, next);
+  },
 
   openLogbook: () => {
     const { tabs } = get();
@@ -236,6 +268,20 @@ export const useStore = create<SkaldState>((set, get) => ({
         dirtyPaths,
       };
     });
+  },
+
+  folderPathChanged: (oldPath, newPath) => {
+    const { folderOpen, snapshot } = get();
+    const next = moveExplorerFolder(folderOpen, oldPath, newPath);
+    set({ folderOpen: next });
+    if (snapshot) saveExplorerState(rendererStorage(), snapshot.vaultPath, next);
+  },
+
+  folderDeleted: (path) => {
+    const { folderOpen, snapshot } = get();
+    const next = removeExplorerFolder(folderOpen, path);
+    set({ folderOpen: next });
+    if (snapshot) saveExplorerState(rendererStorage(), snapshot.vaultPath, next);
   },
 
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
