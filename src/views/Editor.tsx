@@ -30,6 +30,15 @@ import {
 } from '../../src-shared/liveMarkdown';
 import { buildLinkIndex, resolveLinkTarget } from '../../src-shared/wikilinks';
 import { completeTag, matchingTags, tagCompletionAt, type TagCompletionRange } from '../../src-shared/tags';
+import {
+  applyInsertion,
+  coreInsertions,
+  extensionInsertions,
+  type InsertMenuItem,
+  type TextSelection,
+} from '../editor/insertions';
+import { InsertMenu } from './InsertMenu';
+import { OPEN_INSERT_MENU_EVENT } from '../editor/events';
 
 type EditorMode = 'live' | 'preview' | 'source';
 
@@ -47,6 +56,7 @@ export function EditorView({
   const setDocStatus = useStore((s) => s.setDocStatus);
   const notePathRenamed = useStore((s) => s.notePathRenamed);
   const showToast = useStore((s) => s.showToast);
+  const setSwitcherOpen = useStore((s) => s.setSwitcherOpen);
   const editorLocation = useStore((s) => s.editorLocation);
   const clearEditorLocation = useStore((s) => s.clearEditorLocation);
   const marginOn = snapshot.settings.marginOn;
@@ -58,6 +68,8 @@ export function EditorView({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [editingExtensionProperty, setEditingExtensionProperty] = useState<string | null>(null);
   const [pendingExtensionInsertion, setPendingExtensionInsertion] = useState<string | null>(null);
+  const [insertMenuOpen, setInsertMenuOpen] = useState(false);
+  const [liveRequestedSelection, setLiveRequestedSelection] = useState<(TextSelection & { revision: number }) | null>(null);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [lncol, setLncol] = useState<[number, number] | null>(null);
   const [sourceTagRange, setSourceTagRange] = useState<TagCompletionRange | null>(null);
@@ -65,6 +77,9 @@ export function EditorView({
   const taRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveSelectionRef = useRef<TextSelection | null>(null);
+  const pendingBodySelectionRef = useRef<TextSelection | null>(null);
+  const insertionRevision = useRef(0);
 
   const meta = useMemo(
     () => snapshot.notes.find((n) => n.path === path) ?? null,
@@ -94,6 +109,9 @@ export function EditorView({
     setMode('live');
     setDraft(null);
     setLncol(null);
+    setInsertMenuOpen(false);
+    liveSelectionRef.current = null;
+    pendingBodySelectionRef.current = null;
     void load();
   }, [path]);
 
@@ -161,7 +179,7 @@ export function EditorView({
     }
   }, [draft, dirty, path]);
 
-  // ⌘S / ⌘E
+  // ⌘S / ⌘E / ⌘I
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -173,10 +191,24 @@ export function EditorView({
         e.preventDefault();
         setMode((m) => (m === 'source' ? 'live' : 'source'));
       }
+      if (mod && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        setSwitcherOpen(false);
+        setInsertMenuOpen(true);
+      }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [saveNow]);
+  }, [saveNow, setSwitcherOpen]);
+
+  useEffect(() => {
+    const open = () => {
+      setSwitcherOpen(false);
+      setInsertMenuOpen(true);
+    };
+    window.addEventListener(OPEN_INSERT_MENU_EVENT, open);
+    return () => window.removeEventListener(OPEN_INSERT_MENU_EVENT, open);
+  }, [setSwitcherOpen]);
 
   // flush pending save when leaving the note
   useEffect(() => {
@@ -318,16 +350,30 @@ export function EditorView({
     if (value) frontmatter[property.key] = value;
     else delete frontmatter[property.key];
     const nextBody = insertion
-      ? `${body.replace(/\s*$/, '')}\n\n${insertion.markdown}`
+      ? applyInsertion(
+          body,
+          pendingBodySelectionRef.current ?? { start: body.length, end: body.length },
+          { markdown: insertion.markdown, placeholder: insertion.placeholder, block: true }
+        ).text
       : body;
+    pendingBodySelectionRef.current = null;
     onSourceChange(serializeFrontmatter(frontmatter, nextBody));
   };
 
-  const insertExtension = (insertion: EditorInsertContribution) => {
-    if (insertion.propertyKey) {
+  const insertItem = (item: InsertMenuItem) => {
+    const insertion = item.extension;
+    if (insertion?.propertyKey) {
       const property = extensionRegistry.noteProperty(insertion.propertyKey);
       if (!property) throw new Error(`Missing extension property ${insertion.propertyKey}`);
       if (!property.normalize(parsedContent.frontmatter[property.key])) {
+        pendingBodySelectionRef.current = bodySelection(
+          mode,
+          content,
+          body,
+          bodyStartLine,
+          taRef.current,
+          liveSelectionRef.current
+        );
         setPendingExtensionInsertion(insertion.id);
         setEditingExtensionProperty(property.key);
         return;
@@ -335,17 +381,32 @@ export function EditorView({
     }
     if (mode === 'source' && taRef.current) {
       const ta = taRef.current;
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      const prefix = start > 0 && content[start - 1] !== '\n' ? '\n\n' : '';
-      const suffix = end < content.length && content[end] !== '\n' ? '\n' : '';
-      const markdown = `${prefix}${insertion.markdown}${suffix}`;
-      onSourceChange(content.slice(0, start) + markdown + content.slice(end));
-      requestAnimationFrame(() => ta.setSelectionRange(start + markdown.length, start + markdown.length));
+      const result = applyInsertion(content, { start: ta.selectionStart, end: ta.selectionEnd }, item);
+      onSourceChange(result.text);
+      requestAnimationFrame(() => {
+        ta.focus();
+        ta.setSelectionRange(result.start, result.end);
+      });
       return;
     }
-    onBodyChange(`${body.replace(/\s*$/, '')}\n\n${insertion.markdown}`);
+    const selection = mode === 'live' && liveSelectionRef.current
+      ? liveSelectionRef.current
+      : { start: body.length, end: body.length };
+    const result = applyInsertion(body, selection, item);
+    onBodyChange(result.text);
+    setMode('live');
+    insertionRevision.current += 1;
+    setLiveRequestedSelection({
+      start: result.start,
+      end: result.end,
+      revision: insertionRevision.current,
+    });
   };
+
+  const insertItems = useMemo(
+    () => [...coreInsertions, ...extensionInsertions(extensionRegistry.editorInsertions)],
+    []
+  );
 
   const activeExtensionProperty = editingExtensionProperty
     ? extensionRegistry.noteProperty(editingExtensionProperty)
@@ -415,16 +476,13 @@ export function EditorView({
             >
               + attach
             </button>
-            {extensionRegistry.editorInsertions.map((insertion) => (
-              <button
-                key={insertion.id}
-                className="editor-attach-button"
-                title={insertion.title}
-                onClick={() => insertExtension(insertion)}
-              >
-                {insertion.label}
-              </button>
-            ))}
+            <button
+              className="editor-attach-button editor-insert-button"
+              title="Insert Markdown or an extension component — ⌘I"
+              onClick={() => setInsertMenuOpen(true)}
+            >
+              + insert <span className="kbd">⌘I</span>
+            </button>
             <span className="editor-mode-toggle">
               <button aria-selected={mode === 'live'} onClick={() => setMode('live')} title="Live editor — ⌘E">
                 live
@@ -519,6 +577,8 @@ export function EditorView({
                   onBlur={saveNow}
                   onLnCol={setLncol}
                   tags={knownTags}
+                  requestedSelection={liveRequestedSelection}
+                  onSelectionChange={(selection) => { liveSelectionRef.current = selection; }}
                 />
               ) : (
                 <div className="editor-body">
@@ -773,6 +833,14 @@ export function EditorView({
         />
       )}
 
+      {insertMenuOpen && (
+        <InsertMenu
+          items={insertItems}
+          onInsert={insertItem}
+          onClose={() => setInsertMenuOpen(false)}
+        />
+      )}
+
       {historyOpen && (
         <HistoryDialog
           path={path}
@@ -924,6 +992,27 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
 }
 
+function bodySelection(
+  mode: EditorMode,
+  content: string,
+  body: string,
+  bodyStartLine: number,
+  textarea: HTMLTextAreaElement | null,
+  liveSelection: TextSelection | null
+): TextSelection {
+  if (mode === 'live' && liveSelection) return liveSelection;
+  if (mode === 'source' && textarea) {
+    const bodyStart = offsetAt(content, bodyStartLine, 0);
+    if (textarea.selectionStart >= bodyStart) {
+      return {
+        start: Math.min(body.length, textarea.selectionStart - bodyStart),
+        end: Math.min(body.length, textarea.selectionEnd - bodyStart),
+      };
+    }
+  }
+  return { start: body.length, end: body.length };
+}
+
 /**
  * The rendered text of a block up to the point that was clicked.
  *
@@ -1008,6 +1097,8 @@ function LiveMarkdownEditor({
   onBlur,
   onLnCol,
   tags,
+  requestedSelection,
+  onSelectionChange,
 }: {
   body: string;
   ctx: MdContext;
@@ -1016,6 +1107,8 @@ function LiveMarkdownEditor({
   onBlur: () => void;
   onLnCol: (pos: [number, number] | null) => void;
   tags: string[];
+  requestedSelection: (TextSelection & { revision: number }) | null;
+  onSelectionChange: (selection: TextSelection) => void;
 }) {
   // The caret is held as a position in the whole body, not an offset in one
   // block. A keystroke can re-split the blocks under it — pressing Enter is
@@ -1025,6 +1118,7 @@ function LiveMarkdownEditor({
   const [tagRange, setTagRange] = useState<TagCompletionRange | null>(null);
   const [tagSelected, setTagSelected] = useState(0);
   const activeRef = useRef<HTMLTextAreaElement>(null);
+  const restoreSelectionRef = useRef<TextSelection | null>(null);
   const blocks = useMemo(() => splitMarkdownBlocks(body), [body]);
 
   const activeIndex = caret
@@ -1033,15 +1127,29 @@ function LiveMarkdownEditor({
   const tagMatches = tagRange ? matchingTags(tags, tagRange.query) : [];
 
   useEffect(() => {
+    if (!requestedSelection) return;
+    restoreSelectionRef.current = requestedSelection;
+    const position = positionAt(body, requestedSelection.end);
+    setCaret(position);
+  }, [requestedSelection?.revision]);
+
+  useEffect(() => {
     if (!caret || activeIndex < 0) return;
     const ta = activeRef.current;
     const block = blocks[activeIndex];
     if (!ta || !block) return;
+    const blockStart = offsetAt(body, block.startLine, 0);
+    const restore = restoreSelectionRef.current;
     const want = offsetAt(block.raw, caret.line - block.startLine, caret.col);
     if (document.activeElement !== ta) ta.focus();
-    if (ta.selectionStart !== want || ta.selectionEnd !== want) ta.setSelectionRange(want, want);
+    if (restore && restore.start >= blockStart && restore.end <= blockStart + block.raw.length) {
+      ta.setSelectionRange(restore.start - blockStart, restore.end - blockStart);
+      restoreSelectionRef.current = null;
+    } else if (ta.selectionStart !== want || ta.selectionEnd !== want) {
+      ta.setSelectionRange(want, want);
+    }
     updateLiveLnCol(ta, ctx.lineOffset + block.startLine, onLnCol);
-  }, [caret, activeIndex, blocks, ctx.lineOffset, onLnCol]);
+  }, [caret, activeIndex, blocks, body, ctx.lineOffset, onLnCol]);
 
   /** Put the caret somewhere in the body, in whichever block now holds it. */
   const moveCaret = (line: number, col: number) => setCaret({ line, col });
@@ -1081,6 +1189,14 @@ function LiveMarkdownEditor({
     applyEdit(block, { raw: result.text, caret: result.caret });
   };
 
+  const reportSelection = (textarea: HTMLTextAreaElement, block: MarkdownBlock) => {
+    const blockStart = offsetAt(body, block.startLine, 0);
+    onSelectionChange({
+      start: blockStart + textarea.selectionStart,
+      end: blockStart + textarea.selectionEnd,
+    });
+  };
+
   const commitBlur = () => {
     onLnCol(null);
     onBlur();
@@ -1105,12 +1221,15 @@ function LiveMarkdownEditor({
                   onChange(replaceMarkdownBlock(body, block, value));
                   moveCaret(block.startLine + pos.line, pos.col);
                   updateTagCompletion(value, e.target.selectionStart);
+                  reportSelection(e.target, block);
                 }}
                 onClick={(e) => {
                   const pos = positionAt(e.currentTarget.value, e.currentTarget.selectionStart);
                   moveCaret(block.startLine + pos.line, pos.col);
                   updateTagCompletion(e.currentTarget.value, e.currentTarget.selectionStart);
+                  reportSelection(e.currentTarget, block);
                 }}
+                onSelect={(e) => reportSelection(e.currentTarget, block)}
                 onKeyUp={(e) => {
                   // Only keys that move the caret without changing the text. A
                   // keyup after an edit would read a block that has already been
@@ -1118,6 +1237,7 @@ function LiveMarkdownEditor({
                   if (!CARET_KEYS.has(e.key)) return;
                   const pos = positionAt(e.currentTarget.value, e.currentTarget.selectionStart);
                   moveCaret(block.startLine + pos.line, pos.col);
+                  reportSelection(e.currentTarget, block);
                 }}
                 onKeyDown={(e) => {
                   const ta = e.currentTarget;

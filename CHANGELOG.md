@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added a searchable Insert menu for people who do not want to memorize Markdown. `⌘I` / `Ctrl+I`
+  opens headings, formatting, links, lists, tasks, quotes, callouts, code, tables, dividers, and
+  every extension-provided component in one keyboard-navigable palette, also discoverable as an
+  Editor command under `⌘K`. Insertions respect the
+  current selection in Live and Source modes, and future extension actions appear automatically.
+
 - Added Mermaid as Skald's second built-in extension. Standard `mermaid` code fences render
   locally as theme-aware diagrams in Live and Read modes, with zoom, pan, SVG copying, and
   SVG/PNG export. Syntax failures identify the relevant source line and retain the complete

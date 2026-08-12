@@ -6,6 +6,10 @@ the `github` note property, an editor insertion action, a Settings pane, and aut
 main-process providers. Mermaid contributes a local renderer for standard `mermaid` code fences
 and an editor insertion action.
 
+All editor insertion actions appear automatically in the searchable **Insert** menu alongside
+ordinary Markdown building blocks. Open it with `⌘I` / `Ctrl+I` or the **+ insert** editor action;
+extensions do not need to add their own permanent toolbar button.
+
 This first version is intentionally **not** a marketplace or an arbitrary JavaScript loader.
 Extensions ship with Skald, are reviewed with the application, and are registered at startup.
 That establishes a stable contract without allowing downloaded code to execute with vault or

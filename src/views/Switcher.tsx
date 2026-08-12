@@ -4,6 +4,7 @@ import { fuzzyMatch, highlightSegments } from '../../src-shared/fuzzy';
 import { Rune, schemaTone } from '../ui/runes';
 import { api } from '../api';
 import { useStore, relTime } from '../store';
+import { requestInsertMenu } from '../editor/events';
 
 interface Item {
   type: 'note' | 'task' | 'command';
@@ -31,6 +32,8 @@ export function Switcher({
   const setView = useStore((s) => s.setView);
   const switchVault = useStore((s) => s.switchVault);
   const showToast = useStore((s) => s.showToast);
+  const view = useStore((s) => s.view);
+  const selectedPath = useStore((s) => s.selectedPath);
 
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<'all' | 'note' | 'task' | 'command'>('all');
@@ -81,6 +84,14 @@ export function Switcher({
         ts: '⌘B',
         run: () => void api.setSettings({ marginOn: !snapshot.settings.marginOn }),
       },
+      ...(view === 'editor' && selectedPath ? [{
+        type: 'command' as const,
+        id: 'c-insert',
+        label: 'Insert Markdown or component…',
+        folder: 'Editor',
+        ts: '⌘I',
+        run: requestInsertMenu,
+      }] : []),
       { type: 'command', id: 'c-settings', label: 'Open settings', folder: 'View', ts: '↵', run: () => setView('settings') },
       {
         type: 'command',
@@ -100,7 +111,7 @@ export function Switcher({
         run: () => void api.resetGraphLayout(),
       },
     ],
-    [snapshot.settings, onRequestNewNote]
+    [snapshot.settings, onRequestNewNote, view, selectedPath]
   );
 
   const items = useMemo<Item[]>(() => {

@@ -31,6 +31,11 @@ export interface EditorInsertContribution {
   label: string;
   title: string;
   markdown: string;
+  /** Concise noun phrase used in the searchable Insert menu. */
+  menuLabel?: string;
+  keywords?: string[];
+  /** Optional text selected after insertion so typing replaces it. */
+  placeholder?: string;
   /** When absent, insertion does not require a note property. */
   propertyKey?: string;
 }

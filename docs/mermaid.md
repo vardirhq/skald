@@ -11,7 +11,8 @@ flowchart LR
 ```
 ````
 
-Use **+ diagram** in the editor toolbar to insert a starter flowchart. Live and Read modes render
+Open **+ insert** (or press `⌘I` / `Ctrl+I`) and choose **Mermaid diagram** to insert a starter
+flowchart. Live and Read modes render
 the diagram; Source mode and other Markdown applications retain the original fence. Unsupported
 fence languages continue to render as ordinary code blocks.
 
