@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ExtensionManifest } from '../src-shared/extensions';
-import { GITHUB_EXTENSION_MANIFEST } from '../src-shared/extensions';
+import { GITHUB_EXTENSION_MANIFEST, MERMAID_EXTENSION_MANIFEST } from '../src-shared/extensions';
 import { ExtensionRegistry } from '../src/extensions/registry';
 import type { RendererExtension } from '../src/extensions/types';
 import { MainExtensionRegistry } from '../src-main/extensionRegistry';
@@ -23,6 +23,7 @@ function extension(id = 'dev.skald.test'): RendererExtension {
   return {
     manifest: manifest(id),
     markdownComponents: [{ type: 'demo', render: () => null }],
+    codeFenceRenderers: [{ language: 'demo', render: () => null }],
     noteProperties: [{
       key: 'demo',
       label: 'demo',
@@ -42,6 +43,7 @@ describe('ExtensionRegistry', () => {
   it('indexes every declared contribution and matches component names case-insensitively', () => {
     const registry = new ExtensionRegistry([extension()]);
     expect(registry.markdownComponent('DEMO')?.type).toBe('demo');
+    expect(registry.codeFenceRenderer('DEMO')?.language).toBe('demo');
     expect(registry.noteProperty('demo')?.label).toBe('demo');
     expect(registry.editorInsertion('demo.insert')?.propertyKey).toBe('demo');
     expect(registry.settingsPanes[0].id).toBe('extension:demo');
@@ -50,6 +52,12 @@ describe('ExtensionRegistry', () => {
   it('rejects contribution collisions instead of depending on registration order', () => {
     const second = extension('dev.skald.second');
     expect(() => new ExtensionRegistry([extension(), second])).toThrow('Duplicate Markdown component');
+  });
+
+  it('rejects code fence collisions independently of callout components', () => {
+    const second = extension('dev.skald.second');
+    second.markdownComponents = [{ type: 'other', render: () => null }];
+    expect(() => new ExtensionRegistry([extension(), second])).toThrow('Duplicate code fence renderer');
   });
 
   it('rejects insertions whose required property is not registered', () => {
@@ -75,6 +83,11 @@ describe('ExtensionRegistry', () => {
     expect(GITHUB_EXTENSION_MANIFEST.platforms).toContain('android');
   });
 
+  it('keeps Mermaid local and desktop-only until mobile has a renderer', () => {
+    expect(MERMAID_EXTENSION_MANIFEST.capabilities.desktop).toEqual([]);
+    expect(MERMAID_EXTENSION_MANIFEST.platforms).toEqual(['desktop']);
+  });
+
   it('keeps unknown components as ordinary portable callouts', () => {
     const context: MdContext = {
       resolve: () => null,
@@ -90,6 +103,24 @@ describe('ExtensionRegistry', () => {
     };
     const node = renderMarkdown('> [!future] still readable', context)[0] as ReactElement<{ className: string }>;
     expect(node.props.className).toBe('editor-callout');
+  });
+
+  it('keeps unknown fenced languages as ordinary code blocks', () => {
+    const context: MdContext = {
+      resolve: () => null,
+      openNote: () => undefined,
+      openExternal: () => undefined,
+      resolveAttachment: () => null,
+      openAttachment: () => undefined,
+      attachmentUrl: (path) => path,
+      toggleTask: () => undefined,
+      todayISO: '2026-08-12',
+      lineOffset: 0,
+      frontmatter: {},
+    };
+    const node = renderMarkdown('```future\nstill readable\n```', context)[0] as ReactElement<{ className: string; 'data-lang': string }>;
+    expect(node.props.className).toBe('codeblock');
+    expect(node.props['data-lang']).toBe('future');
   });
 });
 

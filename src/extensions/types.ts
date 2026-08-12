@@ -8,6 +8,12 @@ export interface MarkdownComponentContribution {
   render: (input: { content: string; context: MdContext }) => ReactNode;
 }
 
+export interface CodeFenceContribution {
+  /** The case-insensitive language after the opening Markdown fence. */
+  language: string;
+  render: (input: { code: string; context: MdContext }) => ReactNode;
+}
+
 export interface NotePropertyContribution {
   key: string;
   label: string;
@@ -40,6 +46,7 @@ export interface SettingsPaneContribution {
 export interface RendererExtension {
   manifest: ExtensionManifest;
   markdownComponents?: MarkdownComponentContribution[];
+  codeFenceRenderers?: CodeFenceContribution[];
   noteProperties?: NotePropertyContribution[];
   editorInsertions?: EditorInsertContribution[];
   settingsPanes?: SettingsPaneContribution[];

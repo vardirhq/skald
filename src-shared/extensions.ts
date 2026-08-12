@@ -32,3 +32,15 @@ export const GITHUB_EXTENSION_MANIFEST: ExtensionManifest = {
     android: ['external-links'],
   },
 };
+
+export const MERMAID_EXTENSION_MANIFEST: ExtensionManifest = {
+  id: 'dev.skald.mermaid',
+  name: 'Mermaid',
+  version: '1.0.0',
+  description: 'Local diagrams rendered from portable Mermaid code fences.',
+  builtin: true,
+  platforms: ['desktop'],
+  capabilities: {
+    desktop: [],
+  },
+};

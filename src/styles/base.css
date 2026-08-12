@@ -479,6 +479,38 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .github-card--error { display: flex; flex-direction: column; gap: 7px; color: var(--err); box-shadow: inset 3px 0 0 var(--err); }
 .github-card--error button { align-self: flex-start; color: var(--ac); font: 11px var(--font-mono); }
 
+.mermaid-card {
+  margin: 16px 0 20px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  background: var(--bg-3);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+.mermaid-card__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--tx-3);
+  font: 10px var(--font-mono);
+}
+.mermaid-card__toolbar > span { margin-right: auto; text-transform: uppercase; letter-spacing: .08em; }
+.mermaid-card__toolbar button { border: 0; padding: 3px; background: transparent; color: var(--tx-3); font: inherit; }
+.mermaid-card__toolbar button:hover { color: var(--ac); }
+.mermaid-card__viewport { max-height: 70vh; padding: 18px; overflow: auto; }
+.mermaid-card__viewport > div { min-width: 100%; margin: auto; transition: width var(--med) var(--ease); }
+.mermaid-card__viewport svg { display: block; width: 100%; height: auto; margin: auto; }
+.mermaid-card figcaption { padding: 0 12px 10px; color: var(--ok); font: 10px var(--font-mono); text-align: right; }
+.mermaid-card--loading { padding: 20px; color: var(--tx-3); font: 11px var(--font-mono); }
+.mermaid-card--error { display: flex; flex-direction: column; gap: 7px; padding: 15px; color: var(--err); box-shadow: inset 3px 0 0 var(--err); }
+.mermaid-card--error span, .mermaid-card--error summary { color: var(--tx-2); font: 11px var(--font-mono); }
+.mermaid-card--error > code { color: var(--warn); font: 11px var(--font-mono); }
+.mermaid-card--error details pre { margin: 9px 0 0; }
+
 .editor-foot { margin-top: 36px; padding-top: 22px; border-top: 1px solid var(--line); }
 .editor-foot__label {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;

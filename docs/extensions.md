@@ -1,9 +1,10 @@
 # Built-in extensions
 
 Skald extensions are a versioned contribution system for features that cross more than one
-surface. GitHub is the first extension: it contributes the `[!github]` Markdown component,
+surface. GitHub contributes the `[!github]` Markdown component,
 the `github` note property, an editor insertion action, a Settings pane, and authenticated
-main-process providers.
+main-process providers. Mermaid contributes a local renderer for standard `mermaid` code fences
+and an editor insertion action.
 
 This first version is intentionally **not** a marketplace or an arbitrary JavaScript loader.
 Extensions ship with Skald, are reviewed with the application, and are registered at startup.
@@ -33,6 +34,7 @@ Renderer extensions are registered in `src/extensions/registry.ts`. The contract
 `src/extensions/types.ts` supports:
 
 - Markdown component renderers;
+- fenced-code renderers keyed by language;
 - typed note properties with normalization and editor dialogs;
 - editor insertion actions, optionally requiring a property;
 - Settings panes.
@@ -44,7 +46,7 @@ sides use the same serializable manifest from `src-shared/extensions.ts`.
 
 Every manifest declares a stable reverse-domain id, semantic version, supported platforms, and
 capabilities per platform. Registration fails on duplicate ids, component types, properties, actions, panes,
-or IPC channels. An extension therefore cannot silently replace an earlier contribution based
+fenced languages, or IPC channels. An extension therefore cannot silently replace an earlier contribution based
 on import order.
 
 ## Adding a built-in extension
@@ -56,6 +58,8 @@ on import order.
 4. Add the same component identity and an honest fallback to mobile before notes can create the
    component there.
 5. Test normalization, registry collisions, unknown-component fallback, and platform builds.
+
+The planned built-in sequence is recorded in [extension-roadmap.md](extension-roadmap.md).
 
 ## Future third-party packages
 

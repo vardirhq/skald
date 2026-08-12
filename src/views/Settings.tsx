@@ -474,6 +474,7 @@ function ExtensionsPane() {
         {extensionRegistry.extensions.map((extension) => {
           const contributions = [
             extension.markdownComponents?.length ? `${extension.markdownComponents.length} component` : null,
+            extension.codeFenceRenderers?.length ? `${extension.codeFenceRenderers.length} code renderer` : null,
             extension.noteProperties?.length ? `${extension.noteProperties.length} property` : null,
             extension.editorInsertions?.length ? `${extension.editorInsertions.length} editor action` : null,
             extension.settingsPanes?.length ? `${extension.settingsPanes.length} settings pane` : null,

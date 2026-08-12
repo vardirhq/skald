@@ -51,9 +51,13 @@ it and your Markdown remains untouched.
   insert `> [!github]` for live repository, issue, pull request, release, and workflow
   context. Public repositories need no account; optional GitHub App device login unlocks
   private repositories without exposing tokens to the renderer. See [docs/github.md](docs/github.md).
+- **Mermaid diagrams** — standard `mermaid` code fences render locally with Skald-aware colors,
+  zoom and pan, useful syntax errors, SVG copying, and SVG/PNG export. Source remains portable
+  Markdown everywhere else. See [docs/mermaid.md](docs/mermaid.md).
 - **Built-in extensions** — cross-surface integrations register versioned Markdown components,
-  note properties, editor actions, settings panes, capabilities, and protected main-process
-  providers. Unknown components remain ordinary portable callouts. See [docs/extensions.md](docs/extensions.md).
+  fenced-code renderers, note properties, editor actions, settings panes, capabilities, and
+  protected main-process providers. Unknown components and languages retain readable fallbacks.
+  See [docs/extensions.md](docs/extensions.md) and the [extension roadmap](docs/extension-roadmap.md).
 - **Pro tabs** — reorder and pin tabs, middle-click to close, or use the context menu to
   close other tabs and tabs to the right.
 - **Encrypted sync** — pair a second device and your vault follows, through

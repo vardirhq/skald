@@ -68,7 +68,7 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
     }
 
     // fenced code
-    const fence = line.match(/^\s*```(\w*)/);
+    const fence = line.match(/^\s*```([\w-]*)/);
     if (fence) {
       const codeLines: string[] = [];
       i++;
@@ -77,9 +77,20 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
         i++;
       }
       i++; // closing fence
+      const language = fence[1] || '';
+      const code = codeLines.join('\n');
+      const renderer = language ? extensionRegistry.codeFenceRenderer(language) : undefined;
+      if (renderer) {
+        out.push(
+          <Fragment key={`fence-ext${key++}`}>
+            {renderer.render({ code, context: ctx })}
+          </Fragment>
+        );
+        continue;
+      }
       out.push(
         <pre key={`c${key++}`} className="codeblock" data-lang={fence[1] || undefined}>
-          <code>{codeLines.join('\n')}</code>
+          <code>{code}</code>
         </pre>
       );
       continue;
