@@ -1,15 +1,18 @@
 import type {
   EditorInsertContribution,
+  CodeFenceContribution,
   MarkdownComponentContribution,
   NotePropertyContribution,
   RendererExtension,
   SettingsPaneContribution,
 } from './types';
 import { githubExtension } from './github';
+import { mermaidExtension } from './mermaid';
 
 export class ExtensionRegistry {
   readonly extensions: readonly RendererExtension[];
   readonly markdownComponents: readonly MarkdownComponentContribution[];
+  readonly codeFenceRenderers: readonly CodeFenceContribution[];
   readonly noteProperties: readonly NotePropertyContribution[];
   readonly editorInsertions: readonly EditorInsertContribution[];
   readonly settingsPanes: readonly SettingsPaneContribution[];
@@ -19,10 +22,12 @@ export class ExtensionRegistry {
     for (const extension of extensions) validateManifest(extension);
     this.extensions = Object.freeze([...extensions]);
     this.markdownComponents = contributions(extensions, (item) => item.markdownComponents);
+    this.codeFenceRenderers = contributions(extensions, (item) => item.codeFenceRenderers);
     this.noteProperties = contributions(extensions, (item) => item.noteProperties);
     this.editorInsertions = contributions(extensions, (item) => item.editorInsertions);
     this.settingsPanes = contributions(extensions, (item) => item.settingsPanes);
     unique(this.markdownComponents.map((item) => item.type.toLowerCase()), 'Markdown component');
+    unique(this.codeFenceRenderers.map((item) => item.language.toLowerCase()), 'code fence renderer');
     unique(this.noteProperties.map((item) => item.key), 'note property');
     unique(this.editorInsertions.map((item) => item.id), 'editor insertion');
     unique(this.settingsPanes.map((item) => item.id), 'settings pane');
@@ -36,6 +41,11 @@ export class ExtensionRegistry {
   markdownComponent(type: string): MarkdownComponentContribution | undefined {
     const normalized = type.toLowerCase();
     return this.markdownComponents.find((item) => item.type.toLowerCase() === normalized);
+  }
+
+  codeFenceRenderer(language: string): CodeFenceContribution | undefined {
+    const normalized = language.toLowerCase();
+    return this.codeFenceRenderers.find((item) => item.language.toLowerCase() === normalized);
   }
 
   noteProperty(key: string): NotePropertyContribution | undefined {
@@ -74,4 +84,4 @@ function validateManifest(extension: RendererExtension): void {
   }
 }
 
-export const extensionRegistry = new ExtensionRegistry([githubExtension]);
+export const extensionRegistry = new ExtensionRegistry([githubExtension, mermaidExtension]);

@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added Mermaid as Skald's second built-in extension. Standard `mermaid` code fences render
+  locally as theme-aware diagrams in Live and Read modes, with zoom, pan, SVG copying, and
+  SVG/PNG export. Syntax failures identify the relevant source line and retain the complete
+  fenced source. The extension registry now supports collision-safe fenced-code renderers,
+  while unknown languages remain ordinary portable code blocks. See `docs/mermaid.md`.
+
 - Added a versioned built-in extension registry for Markdown components, note properties,
   editor insertion actions, Settings panes, and protected main-process providers. Extensions
   declare platforms and capabilities, registration rejects contribution collisions, and an
