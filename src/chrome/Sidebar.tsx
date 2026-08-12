@@ -7,6 +7,7 @@ import { NewNoteDialog, TextDialog, ConfirmDialog, FolderDialog } from '../ui/di
 import { copyText } from '../ui/clipboard';
 import { api } from '../api';
 import { useStore, todayISO } from '../store';
+import { safeFileName } from '../../src-shared/notes';
 import { activityFor } from './ActivityBar';
 import {
   allFolders,
@@ -157,6 +158,8 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
   const showToast = useStore((s) => s.showToast);
   const pinned = snapshot.settings.pinnedNote;
   const pathsChanged = useStore((s) => s.pathsChanged);
+  const folderPathChanged = useStore((s) => s.folderPathChanged);
+  const folderDeleted = useStore((s) => s.folderDeleted);
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(() => new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
   const [cursorKey, setCursorKey] = useState<string | null>(selectedPath);
@@ -281,8 +284,12 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
     if (!dragging) return;
     try {
       if (dragging.kind === 'folder') {
-        const changes = await api.moveFolder(dragging.path, folder);
+        const oldPath = dragging.path;
+        const name = oldPath.split('/').pop()!;
+        const newPath = folder ? `${folder}/${name}` : name;
+        const changes = await api.moveFolder(oldPath, folder);
         pathsChanged(changes);
+        folderPathChanged(oldPath, newPath);
       } else {
         const paths = selectedNotes.has(dragging.path) ? [...selectedNotes] : [dragging.path];
         const changes = await api.moveNotes(paths, folder);
@@ -710,6 +717,9 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
           onSubmit={async (name) => {
             const changes = await api.renameFolder(dialog.path, name);
             pathsChanged(changes);
+            const parent = parentFolderPath(dialog.path);
+            const renamed = safeFileName(name);
+            folderPathChanged(dialog.path, parent ? `${parent}/${renamed}` : renamed);
             showToast(`Renamed folder to ${name}`);
           }}
           onClose={() => setDialog(null)}
@@ -725,8 +735,11 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
           initial={parentFolderPath(dialog.path)}
           submitLabel="Move folder"
           onSubmit={async (folder) => {
+            const name = dialog.path.split('/').pop()!;
+            const newPath = folder ? `${folder}/${name}` : name;
             const changes = await api.moveFolder(dialog.path, folder);
             pathsChanged(changes);
+            folderPathChanged(dialog.path, newPath);
             showToast('Moved folder');
           }}
           onClose={() => setDialog(null)}
@@ -770,7 +783,10 @@ export function ExplorerTree({ snapshot }: { snapshot: VaultSnapshot }) {
           lede={`The folder and everything inside it will be removed${dialog.notes ? `, including ${dialog.notes} note${dialog.notes === 1 ? '' : 's'}` : ''}. Deleted note text is retained in Skald history.`}
           confirmLabel="Delete folder"
           danger
-          onConfirm={() => api.deleteFolder(dialog.path)}
+          onConfirm={async () => {
+            await api.deleteFolder(dialog.path);
+            folderDeleted(dialog.path);
+          }}
           onClose={() => setDialog(null)}
         />
       )}
