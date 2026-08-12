@@ -72,11 +72,22 @@ export function layoutGraph(
 
   const index = new Map(nodes.map((n, i) => [n.id, i]));
   const adj: [number, number][] = [];
+  const degree = new Array(nodes.length).fill(0);
   for (const [a, b] of edges) {
     const ia = index.get(a);
     const ib = index.get(b);
-    if (ia !== undefined && ib !== undefined && ia !== ib) adj.push([ia, ib]);
+    if (ia !== undefined && ib !== undefined && ia !== ib) {
+      adj.push([ia, ib]);
+      degree[ia]++;
+      degree[ib]++;
+    }
   }
+
+  // A hub's neighbours have to fit on a ring around it, so the ring has to grow
+  // with the count: 100 notes all pulled to one rest length land on top of each
+  // other. Mass makes the hub itself hold still while they spread.
+  const spread = degree.map((d) => Math.sqrt(Math.max(1, d)));
+  const mass = degree.map((d) => 1 + Math.sqrt(Math.max(0, d)) * 0.6);
 
   // Small force simulation; fixed nodes do not move.
   const ITER = 160;
@@ -101,12 +112,12 @@ export function layoutGraph(
           d2 = dx * dx + dy * dy + 1e-6;
         }
         const apart = nodes[i].group !== nodes[j].group ? CROSS_GROUP_PUSH : 1;
-        const f = (REPULSE * apart) / d2;
+        const f = (REPULSE * apart * Math.sqrt(mass[i] * mass[j])) / d2;
         const d = Math.sqrt(d2);
-        fx[i] += (dx / d) * f;
-        fy[i] += (dy / d) * f;
-        fx[j] -= (dx / d) * f;
-        fy[j] -= (dy / d) * f;
+        fx[i] += ((dx / d) * f) / mass[i];
+        fy[i] += ((dy / d) * f) / mass[i];
+        fx[j] -= ((dx / d) * f) / mass[j];
+        fy[j] -= ((dy / d) * f) / mass[j];
       }
     }
 
@@ -114,11 +125,13 @@ export function layoutGraph(
       const dx = nodes[ib].x - nodes[ia].x;
       const dy = nodes[ib].y - nodes[ia].y;
       const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
-      const f = SPRING * (d - REST);
-      fx[ia] += (dx / d) * f;
-      fy[ia] += (dy / d) * f;
-      fx[ib] -= (dx / d) * f;
-      fy[ib] -= (dy / d) * f;
+      // Long, slack edges around hubs; short, firm ones between ordinary notes.
+      const rest = Math.min(0.42, REST * Math.max(spread[ia], spread[ib]));
+      const f = (SPRING * (d - rest)) / Math.max(spread[ia], spread[ib]);
+      fx[ia] += ((dx / d) * f) / mass[ia];
+      fy[ia] += ((dy / d) * f) / mass[ia];
+      fx[ib] -= ((dx / d) * f) / mass[ib];
+      fy[ib] -= ((dy / d) * f) / mass[ib];
     }
 
     // Folder cohesion: every note drifts towards the middle of its own folder.

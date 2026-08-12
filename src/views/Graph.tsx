@@ -4,10 +4,7 @@ import { Rune, schemaTone } from '../ui/runes';
 import { api } from '../api';
 import { useStore, relTime } from '../store';
 
-const W = 1200;
-const H = 720;
-
-/** Viewport transform in viewBox units: translate(x, y) scale(k). */
+/** Viewport transform in CSS pixels: translate(x, y) scale(k). */
 interface Viewport {
   x: number;
   y: number;
@@ -15,21 +12,13 @@ interface Viewport {
 }
 
 const IDENTITY: Viewport = { x: 0, y: 0, k: 1 };
-const MIN_K = 0.35;
+const MIN_K = 0.2;
 const MAX_K = 5;
 const ENTER_MS = 900;
+/** Room each star wants to itself, in pixels at 100%. Sets the world's size. */
+const BREATHING = 132;
 
 const clampK = (k: number): number => Math.max(MIN_K, Math.min(MAX_K, k));
-
-/** Keep a corner of the map on screen, so panning can never lose it entirely. */
-function clampView(v: Viewport): Viewport {
-  const edge = 140;
-  return {
-    k: v.k,
-    x: Math.max(edge - W * v.k, Math.min(W - edge, v.x)),
-    y: Math.max(edge - H * v.k, Math.min(H - edge, v.y)),
-  };
-}
 
 export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
   const openNote = useStore((s) => s.openNote);
@@ -48,6 +37,20 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
   const pan = useRef<{ px: number; py: number; from: Viewport } | null>(null);
   // local position overrides during/after drag, until snapshot catches up
   const [localPos, setLocalPos] = useState<Record<string, { x: number; y: number }>>({});
+  // The pane's own size, so the map fills it instead of letterboxing inside a
+  // fixed viewBox. One viewBox unit is one CSS pixel.
+  const [size, setSize] = useState({ w: 1200, h: 720 });
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) setSize({ w: Math.round(width), h: Math.round(height) });
+    });
+    ro.observe(svg);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => setEntering(false), ENTER_MS);
@@ -70,7 +73,33 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
 
   const visible = useMemo(() => new Set(nodes.map((n) => n.path)), [nodes]);
   const nodeIndex = useMemo(() => new Map(nodes.map((n) => [n.path, n])), [nodes]);
-  const edges = snapshot.graph.edges.filter(([a, b]) => visible.has(a) && visible.has(b));
+  const edges = useMemo(
+    () => snapshot.graph.edges.filter(([a, b]) => visible.has(a) && visible.has(b)),
+    [snapshot.graph.edges, visible]
+  );
+
+  // Positions are normalized, so without this the map packs tighter as the
+  // vault grows. Growing the world with the node count keeps the spacing
+  // between stars constant instead.
+  const world = useMemo(() => {
+    const area = Math.max(nodes.length, 1) * BREATHING * BREATHING;
+    const aspect = size.w / Math.max(size.h, 1);
+    const h = Math.sqrt(area / aspect);
+    return { w: Math.max(size.w, h * aspect), h: Math.max(size.h, h) };
+  }, [nodes.length, size]);
+
+  // What the current focus touches. Everything else fades back, which is most
+  // of what turns a hairball back into a diagram.
+  const near = useMemo(() => {
+    const focus = hover ?? selected;
+    if (!focus || !visible.has(focus)) return null;
+    const set = new Set([focus]);
+    for (const [a, b] of edges) {
+      if (a === focus) set.add(b);
+      else if (b === focus) set.add(a);
+    }
+    return set;
+  }, [hover, selected, edges, visible]);
 
   // Well-connected notes arrive first, so the map draws itself outwards from its hubs.
   const enterRank = useMemo(() => {
@@ -90,17 +119,17 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
 
   const activeNode = nodeIndex.get(hover ?? selected ?? '') ?? null;
 
-  /** Client point → viewBox units, undoing the SVG's letterboxing. */
+  // How well connected a note must be to keep its name at this zoom. Zoomed
+  // out, only the hubs are legible anyway; zoomed in, there is room for all.
+  const minLabelDeg =
+    view.k >= 1.5 ? 0 : view.k >= 1 ? 2 : view.k >= 0.7 ? 4 : view.k >= 0.45 ? 8 : Infinity;
+
+  /** Client point → viewBox units, which are just pixels within the pane. */
   const toViewBox = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current;
     if (!svg) return null;
     const rect = svg.getBoundingClientRect();
-    const scale = Math.min(rect.width / W, rect.height / H);
-    if (!scale) return null;
-    return {
-      vx: (clientX - rect.left - (rect.width - W * scale) / 2) / scale,
-      vy: (clientY - rect.top - (rect.height - H * scale) / 2) / scale,
-    };
+    return { vx: clientX - rect.left, vy: clientY - rect.top };
   }, []);
 
   /** Client point → normalized map coordinates, undoing zoom and pan too. */
@@ -108,25 +137,41 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
     (clientX: number, clientY: number): { x: number; y: number } | null => {
       const p = toViewBox(clientX, clientY);
       if (!p) return null;
-      const x = (p.vx - view.x) / view.k / W;
-      const y = (p.vy - view.y) / view.k / H;
+      const x = (p.vx - view.x) / view.k / world.w;
+      const y = (p.vy - view.y) / view.k / world.h;
       return { x: Math.max(0.02, Math.min(0.98, x)), y: Math.max(0.02, Math.min(0.98, y)) };
     },
-    [toViewBox, view]
+    [toViewBox, view, world]
+  );
+
+  /** Keep a corner of the map on screen, so panning can never lose it entirely. */
+  const clampView = useCallback(
+    (v: Viewport): Viewport => {
+      const edge = 140;
+      return {
+        k: v.k,
+        x: Math.max(edge - world.w * v.k, Math.min(size.w - edge, v.x)),
+        y: Math.max(edge - world.h * v.k, Math.min(size.h - edge, v.y)),
+      };
+    },
+    [world, size]
   );
 
   /** Scale about a fixed point in viewBox units, so it stays under the cursor. */
-  const zoomAround = useCallback((factor: number, vx: number, vy: number) => {
-    setView((v) => {
-      const k = clampK(v.k * factor);
-      if (k === v.k) return v;
-      return clampView({ k, x: vx - ((vx - v.x) / v.k) * k, y: vy - ((vy - v.y) / v.k) * k });
-    });
-  }, []);
+  const zoomAround = useCallback(
+    (factor: number, vx: number, vy: number) => {
+      setView((v) => {
+        const k = clampK(v.k * factor);
+        if (k === v.k) return v;
+        return clampView({ k, x: vx - ((vx - v.x) / v.k) * k, y: vy - ((vy - v.y) / v.k) * k });
+      });
+    },
+    [clampView]
+  );
 
   const zoomBy = useCallback(
-    (factor: number) => zoomAround(factor, W / 2, H / 2),
-    [zoomAround]
+    (factor: number) => zoomAround(factor, size.w / 2, size.h / 2),
+    [zoomAround, size]
   );
 
   /** Frame every visible star with a little breathing room. */
@@ -135,20 +180,33 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
       setView(IDENTITY);
       return;
     }
-    const pad = 90;
-    const xs = nodes.map((n) => n.x * W);
-    const ys = nodes.map((n) => n.y * H);
-    const minX = Math.min(...xs) - pad;
-    const maxX = Math.max(...xs) + pad;
-    const minY = Math.min(...ys) - pad;
-    const maxY = Math.max(...ys) + pad;
-    const k = clampK(Math.min(W / (maxX - minX), H / (maxY - minY)));
+    // Leave the inspector and the legend a lane of their own.
+    const padX = 200;
+    const padY = 110;
+    const xs = nodes.map((n) => n.x * world.w);
+    const ys = nodes.map((n) => n.y * world.h);
+    const minX = Math.min(...xs) - padX;
+    const maxX = Math.max(...xs) + padX;
+    const minY = Math.min(...ys) - padY;
+    const maxY = Math.max(...ys) + padY;
+    const k = clampK(Math.min(size.w / (maxX - minX), size.h / (maxY - minY)));
     setView({
       k,
-      x: W / 2 - ((minX + maxX) / 2) * k,
-      y: H / 2 - ((minY + maxY) / 2) * k,
+      x: size.w / 2 - ((minX + maxX) / 2) * k,
+      y: size.h / 2 - ((minY + maxY) / 2) * k,
     });
-  }, [nodes]);
+  }, [nodes, world, size]);
+
+  // Open framed on the whole map, and reframe when the filter changes which
+  // stars are on it. Never on resize or drag — that would fight the user.
+  const fitRef = useRef(fitView);
+  fitRef.current = fitView;
+  const lastFit = useRef<string | null>(null);
+  useEffect(() => {
+    if (!size.w || !nodes.length || lastFit.current === filter) return;
+    lastFit.current = filter;
+    fitRef.current();
+  }, [filter, size.w, nodes.length]);
 
   // Wheel zoom needs a non-passive listener to keep the page from scrolling.
   useEffect(() => {
@@ -199,15 +257,11 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
     }
     const panning = pan.current;
     if (!panning) return;
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const scale = Math.min(rect.width / W, rect.height / H) || 1;
     setView(
       clampView({
         k: panning.from.k,
-        x: panning.from.x + (e.clientX - panning.px) / scale,
-        y: panning.from.y + (e.clientY - panning.py) / scale,
+        x: panning.from.x + (e.clientX - panning.px),
+        y: panning.from.y + (e.clientY - panning.py),
       })
     );
   };
@@ -227,8 +281,8 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
     <div className={'constellation' + (entering ? ' constellation--enter' : '')}>
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="xMidYMid meet"
+        viewBox={`0 0 ${size.w} ${size.h}`}
+        preserveAspectRatio="xMinYMin slice"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -246,38 +300,46 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
 
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
           {/* oversized so panning never runs off the paper */}
-          <rect x={-2 * W} y={-2 * H} width={5 * W} height={5 * H} fill="url(#grid)" />
+          <rect
+            x={-2 * world.w}
+            y={-2 * world.h}
+            width={5 * world.w}
+            height={5 * world.h}
+            fill="url(#grid)"
+          />
 
           {showClusters &&
             clusters.map(([name, ns]) => {
-              const xs = ns.map((n) => n.x);
-              const ys = ns.map((n) => n.y);
-              const minX = Math.min(...xs) - 0.045;
-              const maxX = Math.max(...xs) + 0.045;
-              const minY = Math.min(...ys) - 0.05;
-              const maxY = Math.max(...ys) + 0.045;
-              const cx = (minX + maxX) / 2;
+              const xs = ns.map((n) => n.x * world.w);
+              const ys = ns.map((n) => n.y * world.h);
+              const minX = Math.min(...xs) - 46;
+              const maxX = Math.max(...xs) + 46;
+              const minY = Math.min(...ys) - 34;
+              const maxY = Math.max(...ys) + 40;
               return (
                 <g key={name} className="cluster">
                   <rect
-                    x={minX * W}
-                    y={minY * H}
-                    width={(maxX - minX) * W}
-                    height={(maxY - minY) * H}
-                    rx="16"
+                    x={minX}
+                    y={minY}
+                    width={maxX - minX}
+                    height={maxY - minY}
+                    rx="18"
                     fill="none"
                     stroke="var(--ac)"
-                    strokeDasharray="2 7"
-                    opacity="0.2"
+                    strokeDasharray={`2 ${7 / view.k}`}
+                    strokeWidth={1 / view.k}
+                    opacity="0.18"
                   />
+                  {/* Anchored in the corner, not centred above: centred titles
+                      collide the moment two clusters sit side by side. */}
                   <text
-                    x={cx * W}
-                    y={minY * H - 8}
-                    textAnchor="middle"
+                    x={minX + 12 / view.k}
+                    y={minY + 16 / view.k}
                     fontFamily="var(--font-mono)"
-                    fontSize="12"
+                    fontSize={11 / view.k}
                     fill="var(--tx-3)"
                     letterSpacing="0.16em"
+                    opacity="0.75"
                   >
                     {name.toUpperCase()}
                   </text>
@@ -293,12 +355,12 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
               return (
                 <line
                   key={i}
-                  x1={na.x * W}
-                  y1={na.y * H}
-                  x2={nb.x * W}
-                  y2={nb.y * H}
+                  x1={na.x * world.w}
+                  y1={na.y * world.h}
+                  x2={nb.x * world.w}
+                  y2={nb.y * world.h}
                   stroke={act ? 'var(--ac)' : 'var(--tx-0)'}
-                  strokeOpacity={act ? 0.7 : 0.12}
+                  strokeOpacity={act ? 0.75 : near ? 0.05 : 0.12}
                   strokeWidth={(act ? 1.3 : 0.8) / view.k}
                 />
               );
@@ -306,13 +368,22 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
           </g>
 
           {nodes.map((n) => {
-            const r = 3 + Math.sqrt(n.deg + 1) * 2.3;
+            // Capped: an unbounded radius lets one 100-link hub swallow its
+            // own neighbourhood.
+            const r = 3 + Math.min(11, Math.sqrt(n.deg + 1) * 2.1);
             const act = selected === n.path || hover === n.path;
             const col = schemaTone(n.schema);
+            const cx = n.x * world.w;
+            const cy = n.y * world.h;
+            const dim = near !== null && !near.has(n.path);
+            // Only the stars that earn a name get one: hubs when zoomed out,
+            // everything once you have zoomed in far enough to read them.
+            const labelled = act || (near?.has(n.path) ?? false) || n.deg >= minLabelDeg;
             return (
               <g
                 key={n.path}
                 className="node"
+                opacity={dim ? 0.22 : 1}
                 style={{ animationDelay: `${Math.min((enterRank.get(n.path) ?? 0) * 16, 520)}ms` }}
                 onMouseEnter={() => setHover(n.path)}
                 onMouseLeave={() => setHover((h) => (h === n.path ? null : h))}
@@ -326,18 +397,26 @@ export function ConstellationView({ snapshot }: { snapshot: VaultSnapshot }) {
                 }}
                 onDoubleClick={() => openNote(n.path)}
               >
-                {act && <circle cx={n.x * W} cy={n.y * H} r={r * 4} fill="url(#halo)" />}
-                <circle cx={n.x * W} cy={n.y * H} r={r} fill={col} stroke="var(--bg-2)" strokeWidth="2" />
-                <text
-                  x={n.x * W}
-                  y={n.y * H + r + 15}
-                  textAnchor="middle"
-                  fontFamily="var(--font-ui)"
-                  fontSize={act || n.deg >= 4 ? '13' : '11.5'}
-                  fill={act ? 'var(--tx-0)' : 'var(--tx-3)'}
-                >
-                  {n.label}
-                </text>
+                {act && <circle cx={cx} cy={cy} r={r * 4} fill="url(#halo)" />}
+                <circle cx={cx} cy={cy} r={r} fill={col} stroke="var(--bg-2)" strokeWidth={2 / view.k} />
+                {labelled && (
+                  <text
+                    // Counter-scaled: a label that shrinks with the map is
+                    // unreadable at exactly the zoom where you need the map.
+                    x={cx}
+                    y={cy + r + 13 / view.k}
+                    textAnchor="middle"
+                    fontFamily="var(--font-ui)"
+                    fontSize={(act ? 12.5 : 11.5) / view.k}
+                    fill={act ? 'var(--tx-0)' : 'var(--tx-3)'}
+                    paintOrder="stroke"
+                    stroke="var(--bg-2)"
+                    strokeWidth={3 / view.k}
+                    strokeLinejoin="round"
+                  >
+                    {n.label}
+                  </text>
+                )}
               </g>
             );
           })}
