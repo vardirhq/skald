@@ -442,6 +442,7 @@ function ShortcutsPane() {
       <div className="set-table">
         {[
           ['⌘K / ⌘P', 'Open command palette'],
+          ['⌘I', 'Open Insert menu in the editor'],
           ['⌘D', "Go to today's page"],
           ['⌘N', 'New note'],
           ['⌘B', 'Toggle right panel'],

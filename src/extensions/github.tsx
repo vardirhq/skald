@@ -42,6 +42,8 @@ export const githubExtension: RendererExtension = {
       id: 'github.repository-card',
       label: '+ repo card',
       title: 'Insert a live GitHub repository card',
+      menuLabel: 'GitHub repository',
+      keywords: ['repo', 'project', 'card'],
       markdown: '> [!github]\n',
       propertyKey: 'github',
     },

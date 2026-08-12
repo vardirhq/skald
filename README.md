@@ -175,6 +175,7 @@ to open the PR yourself instead of opening it.
 | Key | Action |
 | --- | --- |
 | `⌘K` / `⌘P` | Command palette |
+| `⌘I` | Insert Markdown or an extension component |
 | `⌘D` | Today's logbook |
 | `⌘N` | New note |
 | `⌘E` | Toggle reading / source view |
