@@ -37,13 +37,6 @@ export function splitMarkdownBlocks(body: string): MarkdownBlock[] {
   return blocks.map(({ type: _type, parentContainerId: _parentId, parentContainerKind: _parentKind, ...block }) => block);
 }
 
-// ---------- caret arithmetic ----------
-//
-// The editor tracks the caret as a position in the whole body rather than an
-// offset in one block, because a keystroke can re-split the blocks underneath
-// it. A line and column survive that; an offset into a block that no longer
-// exists does not.
-
 export function offsetAt(raw: string, line: number, col: number): number {
   const lines = raw.split('\n');
   const row = Math.max(0, Math.min(line, lines.length - 1));
@@ -58,26 +51,10 @@ export function positionAt(raw: string, offset: number): { line: number; col: nu
 }
 
 const WHITESPACE = /\s/;
-
-/** The bullet, number or checkbox that opens a list line. */
 const LIST_PREFIX = /^(\s*)([-*+]\s+\[[ xX]\]\s+|[-*+]\s+|(\d+)([.)])\s+)/;
 const QUOTE_PREFIX = /^(\s*>\s?)/;
+const SEMANTIC_FENCE = /^\s*:::(?:aside|gallery|group)?\s*$/;
 
-/**
- * Maps a position in a block's *rendered* text back to an offset in its
- * Markdown source.
- *
- * A reader clicks what they can see, and what they can see is the source with
- * the syntax taken out — so the two are walked in step. Characters that agree
- * advance both; anything left over in the source is markup the reader never
- * saw, and is stepped over. Whitespace is treated as equivalent throughout,
- * because a rendered paragraph joins source lines with a space.
- *
- * Where the rendered text is not the source minus syntax — a due date shown as
- * "May 1" — alignment cannot be exact, so the search for the next agreeing
- * character is bounded and falls back to the last position that did agree.
- * Being a few characters out beats landing at the end of the block.
- */
 export function sourceOffsetFromRendered(raw: string, rendered: string): number {
   const MAX_MARKUP_RUN = 400;
   let source = 0;
@@ -109,13 +86,10 @@ export function sourceOffsetFromRendered(raw: string, rendered: string): number 
 }
 
 export interface CaretEdit {
-  /** Replacement text for the block. */
   raw: string;
-  /** Where the caret belongs inside that replacement. */
   caret: number;
 }
 
-/** The marker that should open the item after this one. */
 function nextMarker(prefix: string): string {
   const ordered = /^(\s*)(\d+)([.)])(\s+)$/.exec(prefix);
   if (ordered) return `${ordered[1]}${Number(ordered[2]) + 1}${ordered[3]}${ordered[4]}`;
@@ -128,11 +102,6 @@ function lineBoundsAt(raw: string, caret: number): { start: number; end: number 
   return { start, end: nl === -1 ? raw.length : nl };
 }
 
-/**
- * Shift+Enter: a line break that stays inside this block. Markdown only breaks
- * a line when it is asked to, so the break is written the portable way — two
- * trailing spaces — rather than left as a newline the renderer would swallow.
- */
 export function softBreakInBlock(kind: MarkdownBlockKind, raw: string, caret: number): CaretEdit {
   const before = raw.slice(0, caret);
   const after = raw.slice(caret);
@@ -142,11 +111,6 @@ export function softBreakInBlock(kind: MarkdownBlockKind, raw: string, caret: nu
   return { raw: `${inserted}${after}`, caret: inserted.length };
 }
 
-/**
- * Enter. Inside a list it opens the next item; on an empty item it leaves the
- * list; inside code it is just a newline. Everywhere else it ends this block
- * and opens a new one.
- */
 export function enterInBlock(kind: MarkdownBlockKind, raw: string, caret: number): CaretEdit {
   const before = raw.slice(0, caret);
   const after = raw.slice(caret);
@@ -183,12 +147,20 @@ export function enterInBlock(kind: MarkdownBlockKind, raw: string, caret: number
   return { raw: `${head}\n\n${after}`, caret: head.length + 2 };
 }
 
+/**
+ * Replace an ordinary editable block without implicitly changing semantic
+ * structure. If a multi-block edit would consume an aside/gallery/group fence,
+ * leave the source untouched. Container fences are changed by source mode or a
+ * dedicated container operation, never as a side effect of block joining.
+ */
 export function replaceMarkdownBlock(
   body: string,
   block: Pick<MarkdownBlock, 'startLine' | 'endLine'>,
   raw: string
 ): string {
   const lines = body.length === 0 ? [''] : body.split('\n');
+  const removed = lines.slice(block.startLine, block.endLine + 1);
+  if (removed.some((line) => SEMANTIC_FENCE.test(line))) return body;
   const replacement = raw.length === 0 ? [''] : raw.split('\n');
   lines.splice(block.startLine, block.endLine - block.startLine + 1, ...replacement);
   return lines.join('\n');
