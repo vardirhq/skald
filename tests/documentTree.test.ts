@@ -27,11 +27,22 @@ describe('semantic document tree', () => {
     expect(blocks.find((block) => block.kind === 'task')?.startLine).toBe(4);
   });
 
-  it('does not confuse directives inside code fences for containers', () => {
+  it('does not confuse directives inside top-level code fences for containers', () => {
     const doc = parseDocumentTree('```text\n:::aside\nnot a container\n:::\n```');
     expect(doc.children).toHaveLength(1);
     expect(doc.children[0].type).toBe('block');
     expect(doc.children[0].kind).toBe('code');
+  });
+
+  it('does not close a container on ::: shown inside one of its code blocks', () => {
+    const source = ':::aside\n\n```text\n:::group\nexample\n:::\n```\n\nStill inside.\n\n:::';
+    const doc = parseDocumentTree(source);
+    expect(doc.children).toHaveLength(1);
+    expect(doc.children[0].type).toBe('container');
+    if (doc.children[0].type !== 'container') throw new Error('container missing');
+    expect(doc.children[0].endLine).toBe(10);
+    expect(doc.children[0].children.some((child) => child.kind === 'code')).toBe(true);
+    expect(doc.diagnostics).toEqual([]);
   });
 
   it('reports unclosed containers without swallowing the document', () => {
