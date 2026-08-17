@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added a source-aware semantic document tree while keeping Markdown as the canonical note format.
+  Skald now understands `:::aside`, `:::gallery`, and `:::group` as multi-block semantic
+  containers whose children remain ordinary editable Markdown blocks. Read mode emits a stable
+  `.sk-container*` theme contract, the Insert menu can create or wrap selections in containers,
+  and v1 deliberately rejects nested containers. See `docs/semantic-documents.html` and
+  `docs/semantic-documents.md`.
+
 - Added a searchable Insert menu for people who do not want to memorize Markdown. `⌘I` / `Ctrl+I`
   opens headings, formatting, links, lists, tasks, quotes, callouts, code, tables, dividers, and
   every extension-provided component in one keyboard-navigable palette, also discoverable as an
