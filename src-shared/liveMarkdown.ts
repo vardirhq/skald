@@ -1,12 +1,11 @@
-export type MarkdownBlockKind =
-  | 'blank'
-  | 'heading'
-  | 'code'
-  | 'quote'
-  | 'task'
-  | 'list'
-  | 'rule'
-  | 'paragraph';
+import {
+  flattenEditableBlocks,
+  parseDocumentTree,
+  type MarkdownBlockKind,
+  type SemanticContainerKind,
+} from './documentTree';
+
+export type { MarkdownBlockKind } from './documentTree';
 
 export interface MarkdownBlock {
   id: string;
@@ -14,109 +13,29 @@ export interface MarkdownBlock {
   startLine: number;
   endLine: number;
   raw: string;
+  container?: {
+    id: string;
+    kind: SemanticContainerKind;
+    startLine: number;
+    endLine: number;
+  };
 }
 
-const TASK_LINE = /^\s*[-*+]\s+\[( |x|X)\]\s+/;
-const UL_LINE = /^\s*[-*+]\s+(?!\[[ xX]\]\s)/;
-const OL_LINE = /^\s*\d+[.)]\s+/;
-const HR_LINE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
-
+/**
+ * Compatibility projection for the live editor.
+ *
+ * The runtime model is a tree, but the current editor still edits one ordinary
+ * Markdown block at a time. Container fences therefore do not become giant
+ * editable pseudo-blocks: their children are returned as the same block types
+ * the editor already understands, annotated with their semantic parent.
+ */
 export function splitMarkdownBlocks(body: string): MarkdownBlock[] {
-  if (body.length === 0) {
+  const blocks = flattenEditableBlocks(parseDocumentTree(body));
+  if (blocks.length === 0 && body.length === 0) {
     return [{ id: 'b0-0', kind: 'blank', startLine: 0, endLine: 0, raw: '' }];
   }
-
-  const lines = body.split('\n');
-  const blocks: MarkdownBlock[] = [];
-  let i = 0;
-
-  const push = (kind: MarkdownBlockKind, start: number, end: number) => {
-    blocks.push({
-      id: `b${start}-${end}`,
-      kind,
-      startLine: start,
-      endLine: end,
-      raw: lines.slice(start, end + 1).join('\n'),
-    });
-  };
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    if (!line.trim()) {
-      const start = i;
-      while (i < lines.length && !lines[i].trim()) i++;
-      push('blank', start, i - 1);
-      continue;
-    }
-
-    if (/^\s*```/.test(line)) {
-      const start = i;
-      i++;
-      while (i < lines.length && !/^\s*```/.test(lines[i])) i++;
-      if (i < lines.length) i++;
-      push('code', start, i - 1);
-      continue;
-    }
-
-    if (/^(#{1,6})\s+/.test(line)) {
-      push('heading', i, i);
-      i++;
-      continue;
-    }
-
-    if (HR_LINE.test(line)) {
-      push('rule', i, i);
-      i++;
-      continue;
-    }
-
-    if (/^\s*>/.test(line)) {
-      const start = i;
-      while (i < lines.length && /^\s*>/.test(lines[i])) i++;
-      push('quote', start, i - 1);
-      continue;
-    }
-
-    if (TASK_LINE.test(line)) {
-      const start = i;
-      while (i < lines.length && TASK_LINE.test(lines[i])) i++;
-      push('task', start, i - 1);
-      continue;
-    }
-
-    if (UL_LINE.test(line) || OL_LINE.test(line)) {
-      const start = i;
-      const matcher = UL_LINE.test(line) ? UL_LINE : OL_LINE;
-      while (i < lines.length && matcher.test(lines[i])) i++;
-      push('list', start, i - 1);
-      continue;
-    }
-
-    const start = i;
-    while (
-      i < lines.length &&
-      lines[i].trim() &&
-      !/^\s*(#{1,6}\s|>|```)/.test(lines[i]) &&
-      !TASK_LINE.test(lines[i]) &&
-      !UL_LINE.test(lines[i]) &&
-      !OL_LINE.test(lines[i]) &&
-      !HR_LINE.test(lines[i])
-    ) {
-      i++;
-    }
-    push('paragraph', start, i - 1);
-  }
-
-  return blocks;
+  return blocks.map(({ type: _type, parentContainerId: _parentId, parentContainerKind: _parentKind, ...block }) => block);
 }
-
-// ---------- caret arithmetic ----------
-//
-// The editor tracks the caret as a position in the whole body rather than an
-// offset in one block, because a keystroke can re-split the blocks underneath
-// it. A line and column survive that; an offset into a block that no longer
-// exists does not.
 
 export function offsetAt(raw: string, line: number, col: number): number {
   const lines = raw.split('\n');
@@ -132,27 +51,10 @@ export function positionAt(raw: string, offset: number): { line: number; col: nu
 }
 
 const WHITESPACE = /\s/;
-
-/** The bullet, number or checkbox that opens a list line. */
 const LIST_PREFIX = /^(\s*)([-*+]\s+\[[ xX]\]\s+|[-*+]\s+|(\d+)([.)])\s+)/;
 const QUOTE_PREFIX = /^(\s*>\s?)/;
+const SEMANTIC_FENCE = /^\s*:::(?:aside|gallery|group)?\s*$/;
 
-
-/**
- * Maps a position in a block's *rendered* text back to an offset in its
- * Markdown source.
- *
- * A reader clicks what they can see, and what they can see is the source with
- * the syntax taken out — so the two are walked in step. Characters that agree
- * advance both; anything left over in the source is markup the reader never
- * saw, and is stepped over. Whitespace is treated as equivalent throughout,
- * because a rendered paragraph joins source lines with a space.
- *
- * Where the rendered text is not the source minus syntax — a due date shown as
- * "May 1" — alignment cannot be exact, so the search for the next agreeing
- * character is bounded and falls back to the last position that did agree.
- * Being a few characters out beats landing at the end of the block.
- */
 export function sourceOffsetFromRendered(raw: string, rendered: string): number {
   const MAX_MARKUP_RUN = 400;
   let source = 0;
@@ -163,9 +65,6 @@ export function sourceOffsetFromRendered(raw: string, rendered: string): number 
     if (WHITESPACE.test(rendered[shown])) {
       while (shown < rendered.length && WHITESPACE.test(rendered[shown])) shown++;
       while (source < raw.length && WHITESPACE.test(raw[source])) source++;
-      // Landing at the start of a source line means the marker that opens it —
-      // a bullet, a number, a quote caret — is still ahead. A reader who clicks
-      // the start of a list item means its text, not its bullet.
       if (source > 0 && raw[source - 1] === '\n') {
         const rest = raw.slice(source);
         const marker = LIST_PREFIX.exec(rest)?.[0] ?? QUOTE_PREFIX.exec(rest)?.[1];
@@ -187,17 +86,13 @@ export function sourceOffsetFromRendered(raw: string, rendered: string): number 
 }
 
 export interface CaretEdit {
-  /** Replacement text for the block. */
   raw: string;
-  /** Where the caret belongs inside that replacement. */
   caret: number;
 }
 
-/** The marker that should open the item after this one. */
 function nextMarker(prefix: string): string {
   const ordered = /^(\s*)(\d+)([.)])(\s+)$/.exec(prefix);
   if (ordered) return `${ordered[1]}${Number(ordered[2]) + 1}${ordered[3]}${ordered[4]}`;
-  // A checked box does not carry its tick to the next item.
   return prefix.replace(/\[[xX]\]/, '[ ]');
 }
 
@@ -207,11 +102,6 @@ function lineBoundsAt(raw: string, caret: number): { start: number; end: number 
   return { start, end: nl === -1 ? raw.length : nl };
 }
 
-/**
- * Shift+Enter: a line break that stays inside this block. Markdown only breaks
- * a line when it is asked to, so the break is written the portable way — two
- * trailing spaces — rather than left as a newline the renderer would swallow.
- */
 export function softBreakInBlock(kind: MarkdownBlockKind, raw: string, caret: number): CaretEdit {
   const before = raw.slice(0, caret);
   const after = raw.slice(caret);
@@ -221,12 +111,6 @@ export function softBreakInBlock(kind: MarkdownBlockKind, raw: string, caret: nu
   return { raw: `${inserted}${after}`, caret: inserted.length };
 }
 
-/**
- * Enter. Inside a list it opens the next item; on an empty item it leaves the
- * list; inside code it is just a newline. Everywhere else it ends this block
- * and opens a new one, which is the thing the editor was failing to do — the
- * newline used to fall out of the block being edited and strand the caret.
- */
 export function enterInBlock(kind: MarkdownBlockKind, raw: string, caret: number): CaretEdit {
   const before = raw.slice(0, caret);
   const after = raw.slice(caret);
@@ -240,7 +124,6 @@ export function enterInBlock(kind: MarkdownBlockKind, raw: string, caret: number
     if (match) {
       const marker = match[0];
       if (line.trim() === marker.trim()) {
-        // An empty item means "I am done listing". Drop it and start a block.
         const head = raw.slice(0, start).replace(/\n$/, '');
         const tail = raw.slice(end);
         const joined = head ? `${head}\n\n` : '';
@@ -260,18 +143,24 @@ export function enterInBlock(kind: MarkdownBlockKind, raw: string, caret: number
     }
   }
 
-  // End this block and open the next. The blank line between them is what makes
-  // them two blocks rather than one paragraph with a newline in it.
   const head = before.replace(/[ \t]+$/, '');
   return { raw: `${head}\n\n${after}`, caret: head.length + 2 };
 }
 
+/**
+ * Replace an ordinary editable block without implicitly changing semantic
+ * structure. If a multi-block edit would consume an aside/gallery/group fence,
+ * leave the source untouched. Container fences are changed by source mode or a
+ * dedicated container operation, never as a side effect of block joining.
+ */
 export function replaceMarkdownBlock(
   body: string,
   block: Pick<MarkdownBlock, 'startLine' | 'endLine'>,
   raw: string
 ): string {
   const lines = body.length === 0 ? [''] : body.split('\n');
+  const removed = lines.slice(block.startLine, block.endLine + 1);
+  if (removed.some((line) => SEMANTIC_FENCE.test(line))) return body;
   const replacement = raw.length === 0 ? [''] : raw.split('\n');
   lines.splice(block.startLine, block.endLine - block.startLine + 1, ...replacement);
   return lines.join('\n');

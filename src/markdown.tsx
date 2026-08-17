@@ -2,10 +2,11 @@ import { Fragment, type ReactNode } from 'react';
 import { extractTasks } from '../src-shared/tasks';
 import { parseWikilink } from '../src-shared/wikilinks';
 import type { AttachmentRef } from '../src-shared/types';
+import { parseDocumentTree, type SemanticContainerNode } from '../src-shared/documentTree';
 import { extensionRegistry } from './extensions/registry';
 
 // Markdown → React, emitting exactly the DOM the design system styles.
-// Markdown stays the storage format; this is the reading surface.
+// Markdown stays the storage format; the document tree is the runtime model.
 
 export interface MdContext {
   /** resolve a wikilink target to a note path, or null if missing */
@@ -28,7 +29,39 @@ const TASK_LINE = /^\s*[-*+]\s+\[( |x|X)\]\s+/;
 const UL_LINE = /^\s*[-*+]\s+(?!\[[ xX]\]\s)/;
 const OL_LINE = /^\s*\d+[.)]\s+/;
 
+/** Render a complete Markdown body through Skald's semantic document model. */
 export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
+  const document = parseDocumentTree(body);
+  return document.children.flatMap((node) => {
+    if (node.type === 'block') {
+      return renderFlatMarkdown(node.raw, { ...ctx, lineOffset: ctx.lineOffset + node.startLine });
+    }
+    return [renderContainer(node, ctx)];
+  });
+}
+
+function renderContainer(node: SemanticContainerNode, ctx: MdContext): ReactNode {
+  return (
+    <section
+      key={node.id}
+      className={`sk-container sk-container--${node.kind}`}
+      data-container={node.kind}
+      data-skald-container="1"
+    >
+      <div className="sk-container__content">
+        {node.children.flatMap((child) =>
+          renderFlatMarkdown(child.raw, {
+            ...ctx,
+            lineOffset: ctx.lineOffset + child.startLine,
+          })
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Render ordinary Markdown blocks. Container structure is handled above. */
+function renderFlatMarkdown(body: string, ctx: MdContext): ReactNode[] {
   const lines = body.split('\n');
   const out: ReactNode[] = [];
   let i = 0;
@@ -36,9 +69,6 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
 
   const flushPara = (buf: string[], startLine: number) => {
     if (!buf.join(' ').trim()) return;
-    // Lines run together into one paragraph, as Markdown says they should —
-    // except where a line asks for a break, with two trailing spaces or a
-    // trailing backslash. That is what Shift+Enter writes.
     const parts: ReactNode[] = [];
     let run: string[] = [];
     const flushRun = () => {
@@ -65,13 +95,11 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
   while (i < lines.length) {
     const line = lines[i];
 
-    // blank
     if (!line.trim()) {
       i++;
       continue;
     }
 
-    // fenced code
     const fence = line.match(/^\s*```([\w-]*)/);
     if (fence) {
       const codeLines: string[] = [];
@@ -80,7 +108,7 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
         codeLines.push(lines[i]);
         i++;
       }
-      i++; // closing fence
+      i++;
       const language = fence[1] || '';
       const code = codeLines.join('\n');
       const renderer = language ? extensionRegistry.codeFenceRenderer(language) : undefined;
@@ -100,7 +128,6 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
       continue;
     }
 
-    // headings
     const h = line.match(/^(#{1,6})\s+(.+?)\s*$/);
     if (h) {
       const level = h[1].length;
@@ -113,16 +140,12 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
           </h1>
         );
       } else if (level === 2) {
-        // The inner span is private to the current h2 treatment; themes target
-        // the h2 itself, so this stays removable.
         out.push(
           <h2 key={`h${key++}`} id={id} className="sk-h2">
             <span className="h2-text">{inline(text, ctx)}</span>
           </h2>
         );
       } else {
-        // Levels 3–6 each keep their own tag. Collapsing them all into h3 lost
-        // the distinction Markdown wrote down.
         const Tag = `h${level}` as 'h3' | 'h4' | 'h5' | 'h6';
         out.push(
           <Tag key={`h${key++}`} id={id} className={`sk-h${level}`}>
@@ -134,14 +157,12 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
       continue;
     }
 
-    // hr
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
       out.push(<hr key={`hr${key++}`} className="sk-rule" />);
       i++;
       continue;
     }
 
-    // blockquote / callout
     if (/^\s*>/.test(line)) {
       const quoteLines: string[] = [];
       while (i < lines.length && /^\s*>/.test(lines[i])) {
@@ -177,7 +198,6 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
       continue;
     }
 
-    // task list run
     if (TASK_LINE.test(line)) {
       const start = i;
       while (i < lines.length && TASK_LINE.test(lines[i])) i++;
@@ -206,17 +226,11 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
                 />
                 <span className="task-label sk-task__label">{inline(t.content, ctx)}</span>
                 <span className="task-meta sk-task__meta">
-                  {/* Status colour lives in the stylesheet, not an inline style:
-                      an inline style outranks every rule a theme could write. */}
                   {t.status === 'working' && (
-                    <span className="sk-task__status" data-status="working">
-                      working ·{' '}
-                    </span>
+                    <span className="sk-task__status" data-status="working">working ·{' '}</span>
                   )}
                   {t.status === 'blocked' && (
-                    <span className="sk-task__status" data-status="blocked">
-                      blocked ·{' '}
-                    </span>
+                    <span className="sk-task__status" data-status="blocked">blocked ·{' '}</span>
                   )}
                   {t.due && (
                     <span className={(over ? 'due' : 'due--ok') + ' sk-task__due'} data-overdue={over}>
@@ -233,7 +247,6 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
       continue;
     }
 
-    // plain unordered list
     if (UL_LINE.test(line)) {
       const items: string[] = [];
       while (i < lines.length && UL_LINE.test(lines[i])) {
@@ -243,16 +256,13 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
       out.push(
         <ul key={`ul${key++}`} className="plain sk-list">
           {items.map((it, n) => (
-            <li key={n} className="sk-list__item">
-              {inline(it, ctx)}
-            </li>
+            <li key={n} className="sk-list__item">{inline(it, ctx)}</li>
           ))}
         </ul>
       );
       continue;
     }
 
-    // ordered list
     if (OL_LINE.test(line)) {
       const items: string[] = [];
       while (i < lines.length && OL_LINE.test(lines[i])) {
@@ -262,16 +272,13 @@ export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
       out.push(
         <ol key={`ol${key++}`} className="plain sk-list sk-list--ordered">
           {items.map((it, n) => (
-            <li key={n} className="sk-list__item">
-              {inline(it, ctx)}
-            </li>
+            <li key={n} className="sk-list__item">{inline(it, ctx)}</li>
           ))}
         </ol>
       );
       continue;
     }
 
-    // paragraph: consume until blank or block start
     const buf: string[] = [];
     const startLine = i;
     while (
@@ -299,8 +306,6 @@ function formatDue(due: string): string {
   return `${parseInt(m[2], 10)} ${months[parseInt(m[1], 10) - 1]}`;
 }
 
-// ---------- inline ----------
-
 const INLINE_RE =
   /(`[^`\n]+`)|(\[\[[^\]]+\]\])|(!\[[^\]]*\]\([^)]+\))|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\s][^*]*\*)|(_[^_\s][^_]*_)|(~~[^~]+~~)|(\[[^\]]+\]\([^)]+\))/;
 
@@ -319,20 +324,14 @@ export function inline(text: string, ctx: MdContext): ReactNode {
     rest = rest.slice(m.index + tok.length);
 
     if (tok.startsWith('`')) {
-      nodes.push(
-        <code key={key++} className="sk-code-inline">
-          {tok.slice(1, -1)}
-        </code>
-      );
+      nodes.push(<code key={key++} className="sk-code-inline">{tok.slice(1, -1)}</code>);
     } else if (tok.startsWith('[[')) {
       const { target, display } = parseWikilink(tok.slice(2, -2));
       const path = ctx.resolve(target);
       nodes.push(
         <a
           key={key++}
-          className={
-            'wikilink sk-wikilink' + (path ? '' : ' wikilink--missing sk-wikilink--missing')
-          }
+          className={'wikilink sk-wikilink' + (path ? '' : ' wikilink--missing sk-wikilink--missing')}
           href="#"
           title={path ?? `No note named “${target}”`}
           onClick={(e) => {
@@ -353,10 +352,7 @@ export function inline(text: string, ctx: MdContext): ReactNode {
         nodes.push(
           <span
             key={key++}
-            className={
-              'attachment-image sk-figure' +
-              (canOpen ? '' : ' attachment--missing sk-figure--missing')
-            }
+            className={'attachment-image sk-figure' + (canOpen ? '' : ' attachment--missing sk-figure--missing')}
             role={canOpen ? 'button' : undefined}
             tabIndex={canOpen ? 0 : undefined}
             onClick={() => canOpen && ctx.openAttachment(ref!.path!)}
@@ -372,9 +368,7 @@ export function inline(text: string, ctx: MdContext): ReactNode {
             ) : (
               <span className="attachment-image__missing">Missing image · {lm[1] || lm[2]}</span>
             )}
-            {lm[1] && (
-              <span className="attachment-image__caption sk-figure__caption">{lm[1]}</span>
-            )}
+            {lm[1] && <span className="attachment-image__caption sk-figure__caption">{lm[1]}</span>}
           </span>
         );
       }
@@ -394,9 +388,7 @@ export function inline(text: string, ctx: MdContext): ReactNode {
           nodes.push(
             <span
               key={key++}
-              className={
-                'attachment-card sk-file' + (canOpen ? '' : ' attachment--missing')
-              }
+              className={'attachment-card sk-file' + (canOpen ? '' : ' attachment--missing')}
               role={canOpen ? 'button' : undefined}
               tabIndex={canOpen ? 0 : undefined}
               title={canOpen ? ref.path! : `Missing file: ${url}`}
@@ -417,8 +409,6 @@ export function inline(text: string, ctx: MdContext): ReactNode {
           );
         } else {
           nodes.push(
-            // Styled like a wikilink today, but a distinct class: a theme has
-            // to be able to tell an outbound link from a link into the vault.
             <a
               key={key++}
               className="wikilink sk-link"

@@ -1,6 +1,6 @@
 import type { EditorInsertContribution } from '../extensions/types';
 
-export type InsertCategory = 'Text' | 'Lists' | 'Blocks' | 'Extensions';
+export type InsertCategory = 'Text' | 'Lists' | 'Blocks' | 'Containers' | 'Extensions';
 
 export interface InsertMenuItem {
   id: string;
@@ -33,10 +33,13 @@ export const coreInsertions: readonly InsertMenuItem[] = [
   item('numbered-list', 'Numbered list', 'Start an ordered list', 'Lists', '1. List item', 'List item', true, ['ordered']),
   item('task', 'Task', 'Add an unchecked task', 'Lists', '- [ ] Task', 'Task', true, ['todo', 'checkbox', 'thread']),
   item('quote', 'Quote', 'Add a block quote', 'Blocks', '> Quote', 'Quote', true, ['blockquote']),
-  item('callout', 'Callout', 'Add a highlighted note block', 'Blocks', '> [!note]\n> Callout text', 'Callout text', true, ['aside', 'admonition']),
+  item('callout', 'Callout', 'Add a highlighted note block', 'Blocks', '> [!note]\n> Callout text', 'Callout text', true, ['admonition']),
   item('code', 'Code block', 'Add a fenced code block', 'Blocks', '```text\nCode\n```', 'Code', true, ['fence', 'snippet']),
   item('table', 'Table', 'Add a two-column Markdown table', 'Blocks', '| Column 1 | Column 2 |\n| --- | --- |\n| Value | Value |', 'Column 1', true, ['grid', 'columns']),
   item('divider', 'Divider', 'Separate sections with a horizontal rule', 'Blocks', '---', undefined, true, ['rule', 'separator']),
+  item('aside', 'Aside', 'Group supporting context without changing its Markdown blocks', 'Containers', ':::aside\n\nContent\n\n:::', 'Content', true, ['semantic', 'context', 'note', 'fenced div', 'wrap']),
+  item('gallery', 'Gallery', 'Group images or other media as one semantic gallery', 'Containers', ':::gallery\n\n![](image.jpg)\n\n:::', '![](image.jpg)', true, ['semantic', 'images', 'photos', 'media', 'fenced div']),
+  item('group', 'Group', 'Group related blocks without prescribing their visual layout', 'Containers', ':::group\n\nContent\n\n:::', 'Content', true, ['semantic', 'section', 'collection', 'fenced div', 'wrap']),
 ];
 
 export function extensionInsertions(contributions: readonly EditorInsertContribution[]): InsertMenuItem[] {

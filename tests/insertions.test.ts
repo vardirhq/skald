@@ -27,6 +27,18 @@ describe('editor insertions', () => {
     );
   });
 
+  it('offers the v1 semantic containers in their own category', () => {
+    const containers = coreInsertions.filter((item) => item.category === 'Containers');
+    expect(containers.map((item) => item.id)).toEqual(['core.aside', 'core.gallery', 'core.group']);
+  });
+
+  it('wraps selected Markdown in an aside without rewriting the selected blocks', () => {
+    const aside = coreInsertions.find((item) => item.id === 'core.aside')!;
+    const selected = '## Context\n\n- First\n- Second';
+    const result = applyInsertion(selected, { start: 0, end: selected.length }, aside);
+    expect(result.text).toBe(':::aside\n\n## Context\n\n- First\n- Second\n\n:::\n');
+  });
+
   it('turns every extension contribution into a searchable menu item', () => {
     const [item] = extensionInsertions([{
       id: 'demo.card',

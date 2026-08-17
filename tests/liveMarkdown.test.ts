@@ -26,6 +26,12 @@ describe('live Markdown blocks', () => {
     expect(blocks[6].raw).toBe('```ts\nconst x = 1\n```');
   });
 
+  it('projects semantic container children as ordinary editable blocks', () => {
+    const blocks = splitMarkdownBlocks(':::aside\n\n## Context\n\nText\n\n:::');
+    expect(blocks.map((block) => block.kind)).toEqual(['blank', 'heading', 'blank', 'paragraph', 'blank']);
+    expect(blocks.find((block) => block.kind === 'heading')?.container?.kind).toBe('aside');
+  });
+
   it('replaces only the selected block', () => {
     const body = '# Title\n\nOld paragraph\n\n- [ ] Task';
     const block = splitMarkdownBlocks(body).find((item) => item.kind === 'paragraph')!;
@@ -33,6 +39,17 @@ describe('live Markdown blocks', () => {
     expect(replaceMarkdownBlock(body, block, 'New paragraph')).toBe(
       '# Title\n\nNew paragraph\n\n- [ ] Task'
     );
+  });
+
+  it('refuses a block edit that would implicitly consume a semantic fence', () => {
+    const body = 'Before\n:::aside\nInside\n:::';
+    expect(replaceMarkdownBlock(body, { startLine: 0, endLine: 2 }, 'BeforeInside')).toBe(body);
+  });
+
+  it('still edits a child block without touching its surrounding fences', () => {
+    const body = ':::aside\nInside\n:::';
+    const block = splitMarkdownBlocks(body).find((item) => item.kind === 'paragraph')!;
+    expect(replaceMarkdownBlock(body, block, 'Changed')).toBe(':::aside\nChanged\n:::');
   });
 
   it('replaces a frontmatter-stripped body without touching frontmatter', () => {
