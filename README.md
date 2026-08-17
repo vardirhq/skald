@@ -15,6 +15,11 @@ it and your Markdown remains untouched.
 - **Typed notes** — every note has a schema (`Note`, `Project`, `Person`, `Daily`, `Idea`,
   `Source`, `Code`, `Place`), set via frontmatter or inferred from its folder. Each schema
   carries a monoline rune that follows the note everywhere it's mentioned.
+- **Semantic documents** — keep Markdown canonical while grouping real blocks with
+  `:::aside`, `:::gallery`, and `:::group`. Containers add meaning rather than hard-coded
+  layout, so note themes can radically change presentation without changing the source.
+  Use `⌘I` / `Ctrl+I` to insert or wrap them. See the
+  [visual guide](docs/semantic-documents.html) and [full reference](docs/semantic-documents.md).
 - **Threads** — any `- [ ]` checkbox you write becomes a task in the global Table, Kanban,
   and Calendar views. Edits propagate both ways: check it in the board and the Markdown
   file is rewritten; metadata rides along as `@due(2026-06-01) @p(high) @status(working) #tag`.
