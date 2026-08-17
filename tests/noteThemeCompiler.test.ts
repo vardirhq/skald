@@ -5,6 +5,7 @@ import {
   isValidThemeName,
   parseThemeVersion,
   resolveThemeName,
+  rewriteScopeRoot,
   themeFilePath,
 } from '../src-shared/noteThemes';
 
@@ -132,6 +133,49 @@ describe('rejected constructs', () => {
   it('reports the line a rejection came from', () => {
     const result = compile('.sk-p {\n  color: red;\n  position: fixed;\n}');
     expect(result.rejections[0].line).toBe(3);
+  });
+});
+
+// Inside @scope a bare selector is implicitly relative to the root, so
+// `.sk-note` matches a nested note and never the root. Without this rewrite the
+// obvious way to set a token silently does nothing.
+describe('scope root rewriting', () => {
+  it('points a leading scope class at the root', () => {
+    expect(rewriteScopeRoot('.sk-note')).toBe(':scope');
+    expect(rewriteScopeRoot('.sk-note .sk-p')).toBe(':scope .sk-p');
+    expect(rewriteScopeRoot('.sk-note.dense')).toBe(':scope.dense');
+    expect(rewriteScopeRoot('  .sk-note')).toBe('  :scope');
+  });
+
+  it('leaves a non-leading occurrence alone, since that is a nested note', () => {
+    expect(rewriteScopeRoot('.foo .sk-note')).toBe('.foo .sk-note');
+  });
+
+  it('does not confuse a different class that shares the prefix', () => {
+    expect(rewriteScopeRoot('.sk-note-wide')).toBe('.sk-note-wide');
+  });
+
+  it('handles every item of a selector list', () => {
+    expect(rewriteScopeRoot('.sk-note, .sk-p')).toBe(':scope, .sk-p');
+  });
+
+  it('is not fooled by a comma inside :is()', () => {
+    expect(rewriteScopeRoot('.sk-note:is(.a, .b)')).toBe(':scope:is(.a, .b)');
+  });
+
+  it('rewrites through the compiler, including inside @media', () => {
+    const { css } = compile('.sk-note { --note-measure: 62ch; }');
+    expect(css).toContain(':scope {');
+    expect(css).not.toMatch(/\{\s*\.sk-note\s*\{/);
+
+    const nested = compile('@media screen { .sk-note { color: red; } }');
+    expect(nested.css).toContain(':scope');
+  });
+
+  it('leaves a hoisted rule untouched', () => {
+    const { css } = compile('@font-face { font-family: "X"; src: url(a.woff2); }');
+    expect(css).toContain('@font-face');
+    expect(css).not.toContain(':scope');
   });
 });
 

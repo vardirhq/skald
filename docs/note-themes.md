@@ -1,7 +1,9 @@
 # Note themes
 
-A design proposal. The renderer groundwork is in place — the `sk-` class contract is emitted
-today — but theme files are not loaded yet, so nothing in a vault changes appearance.
+Themes load and apply. Put a `.css` file in the vault's `themes/` folder, name it from a note's
+frontmatter, and that note is restyled. What is not built yet is any UI: no theme picker, no
+editor, no way to see what the compiler rejected. Until those exist this is a feature you drive
+by writing files, and the rejections are returned to the renderer but not yet shown anywhere.
 
 Skald renders Markdown into a fixed reading surface. A note theme lets the person who owns the
 vault restyle that surface: a plain CSS file, written by them, living in their vault, applied to
@@ -240,6 +242,12 @@ It still needs boundaries, because CSS can reach further than the note. `compile
   is deliberately not done by rewriting selectors: rewriting means hand-parsing selector syntax,
   and every corner missed there is a rule that escapes the note. Delegating to the engine also
   handles `html`, `body` and `:root` for free, since none of them is inside the scope root.
+- One selector *is* rewritten, and it is a correctness fix rather than a containment one. Inside
+  `@scope`, a bare selector is implicitly relative to the root, so `.sk-note` matches a *nested*
+  note and never the root itself — which would make `.sk-note { --note-measure: 62ch }`, the
+  obvious way to set a token, silently do nothing. A leading scope class is therefore rewritten
+  to `:scope`. A non-leading one (`.foo .sk-note`) is left alone, because there it really does
+  mean a nested note. Getting this wrong can only fail to apply a rule; it cannot let one out.
 - `@import` is dropped. It fetches another stylesheet, which is both a remote load and a way
   around everything else here.
 - `url()` must stay in the vault. Relative paths and `data:` are kept; anything with a scheme or
@@ -249,8 +257,14 @@ It still needs boundaries, because CSS can reach further than the note. `compile
   selector cannot.
 - `@font-face`, `@keyframes` and `@property` are lifted back out of the `@scope` block. They
   register a name rather than match an element, so leaving them inside would silently cost a
-  theme its typeface. Their names are global, so two themes open in different tabs share a
-  namespace — worth knowing before naming a font `Body`.
+  theme its typeface. Their names land in the document's namespace; only one editor is mounted
+  at a time, so only one theme is ever live and they cannot collide with each other.
+
+Both behaviours above were confirmed against real Chromium rather than reasoned about: a scoped
+sheet declaring `html, body, :root { background: red }` leaves the page background untouched, a
+`.sk-p` outside the note stays unstyled while the one inside picks the theme up, a nested
+`@media` still applies, and a hoisted `@font-face` registers. The check ran on Chromium 141;
+Electron 31 ships 126, and `@scope` has behaved this way since 118.
 
 Nothing is removed silently: every drop is returned as a rejection carrying the source line, the
 offending text, and why, so the theme editor can show the author what happened instead of
@@ -300,14 +314,30 @@ Extension-rendered DOM — Mermaid's SVG, GitHub cards — belongs to those exte
 versioned with them, not here. So does the frontmatter property chrome, the backlinks margin,
 the outline, and every part of the editor that is not the rendered note.
 
+## How it is wired
+
+`Vault.listThemes` and `Vault.readTheme` expose the folder over the `theme:list` and
+`theme:read` channels. `readTheme` re-validates the name even though the caller already did:
+`style:` is note frontmatter, which is user text arriving through IPC, and `full()` guards the
+path a second time after that.
+
+In the renderer, `useNoteTheme` resolves the name, reads the file, compiles it and applies the
+result to a single `<style>` element — one editor is mounted at a time, so one sheet is live at
+a time. It takes the vault snapshot as a dependency, so editing a theme file on disk reapplies
+it: the watcher already covers `themes/`, and no dedicated channel was needed.
+
+`vaultTheme` and `schemaThemes` sit in `VaultSettings` beside the `schemaTemplates` map they
+resemble.
+
 ## Still open
 
-- Loading. `compileTheme` and `resolveThemeName` are done and tested; reading the file from the
-  vault, applying the compiled sheet, and reacting when it changes on disk is the next piece.
-  The vault watcher already covers `themes/`, so change events come for free.
-- Settings. `vaultTheme` and `schemaThemes` need to join `VaultSettings`, alongside the
-  `schemaTemplates` map they resemble.
-- Whether a theme applies in live mode as well as read mode, or only once you stop editing.
+- Every piece of UI. A picker, the token controls, the editor with live preview, and somewhere
+  to surface rejections. The compiler already returns them with line, text and reason; nothing
+  displays them yet.
+- Whether a theme should apply while editing a block in live mode, or only to rendered blocks.
+- The `.sk-note` scope root also contains `.live-block__textarea`. Re-asserting the essentials
+  for it after the theme, so no stylesheet can make the block you are editing unusable, is not
+  done.
 - Export. Resolving a theme and inlining it produces a self-contained HTML file — the artifact
   case that started this discussion — but the resolved CSS and the vault fonts both have to be
   embedded for it to survive leaving the vault.

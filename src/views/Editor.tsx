@@ -39,6 +39,7 @@ import {
 } from '../editor/insertions';
 import { InsertMenu } from './InsertMenu';
 import { OPEN_INSERT_MENU_EVENT } from '../editor/events';
+import { useNoteTheme } from '../useNoteTheme';
 
 type EditorMode = 'live' | 'preview' | 'source';
 
@@ -309,6 +310,9 @@ export function EditorView({
     lineOffset: bodyStartLine,
     frontmatter: parsedContent.frontmatter,
   };
+
+  // Applies the note's theme, if it has one, for as long as it is open.
+  useNoteTheme(parsedContent.frontmatter, meta?.schema ?? null, snapshot.settings, snapshot);
 
   const noteTasks = snapshot.tasks.filter((t) => t.notePath === path);
   const fmEntries = Object.entries(parsedContent.frontmatter).filter(

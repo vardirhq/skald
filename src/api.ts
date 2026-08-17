@@ -108,6 +108,10 @@ export const api = {
     opts?: { due?: string | null; priority?: 'low' | 'med' | 'high' }
   ) => bridge().invoke('task:add', notePath, content, opts) as Promise<void>,
 
+  // note themes
+  listThemes: () => bridge().invoke('theme:list') as Promise<string[]>,
+  readTheme: (name: string) => bridge().invoke('theme:read', name) as Promise<string | null>,
+
   // settings / graph
   setSettings: (patch: Partial<VaultSettings>) =>
     bridge().invoke('settings:set', patch) as Promise<VaultSettings>,

@@ -413,6 +413,39 @@ describe('Vault end-to-end', () => {
     rmSync(empty, { recursive: true, force: true });
   });
 
+  it('lists css themes from the vault themes folder', async () => {
+    vault = await makeVault();
+    expect(await vault.listThemes()).toEqual([]);
+
+    mkdirSync(join(dir, 'themes'));
+    writeFileSync(join(dir, 'themes', 'field-journal.css'), '.sk-p { color: red; }');
+    writeFileSync(join(dir, 'themes', 'quiet.css'), '.sk-p { color: blue; }');
+    writeFileSync(join(dir, 'themes', 'notes.txt'), 'not a theme');
+
+    expect(await vault.listThemes()).toEqual(['field-journal', 'quiet']);
+  });
+
+  it('reads a theme by name', async () => {
+    mkdirSync(join(dir, 'themes'));
+    writeFileSync(join(dir, 'themes', 'quiet.css'), '.sk-p { color: blue; }');
+    vault = await makeVault();
+
+    expect(await vault.readTheme('quiet')).toBe('.sk-p { color: blue; }');
+    expect(await vault.readTheme('absent')).toBeNull();
+  });
+
+  // `style:` is note frontmatter — user text arriving through IPC.
+  it('refuses a theme name that would climb out of the vault', async () => {
+    const secret = join(dir, 'secret.css');
+    writeFileSync(secret, 'stolen');
+    mkdirSync(join(dir, 'themes'));
+    vault = await makeVault();
+
+    for (const name of ['../secret', '../../etc/passwd', 'a/b', '..']) {
+      expect(await vault.readTheme(name), name).toBeNull();
+    }
+  });
+
   it('seeds a relative vault path without rejecting root notes', async () => {
     const parent = mkdtempSync(join(tmpdir(), 'skald-relative-parent-'));
     const absoluteVaultPath = join(parent, 'relative-vault');

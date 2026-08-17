@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'no
 import { join, dirname, relative, sep, basename, extname, resolve } from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import { parseFrontmatter, serializeFrontmatter } from '../src-shared/frontmatter';
+import { isValidThemeName, themeFilePath } from '../src-shared/noteThemes';
 import { extractTasks, updateTaskLine, formatTaskLine, taskId, type TaskEdits } from '../src-shared/tasks';
 import {
   extractWikilinkTargets,
@@ -80,6 +81,8 @@ interface NoteRecord {
 }
 
 const SKALD_DIR = '.skald';
+/** Note themes live in the vault, not in .skald: they are the user's own writing. */
+const THEMES_DIR = 'themes';
 const ACTIVITY_CAP = 300;
 const HISTORY_CAP_PER_NOTE = 100;
 const HISTORY_COALESCE_MS = 5 * 60_000;
@@ -1498,6 +1501,37 @@ export class Vault {
     this.saveSettings();
     this.broadcast();
     return this.settings;
+  }
+
+  // ---------- note themes ----------
+
+  /** Theme names available in the vault's themes folder. */
+  async listThemes(): Promise<string[]> {
+    try {
+      const entries = await readdir(this.full(THEMES_DIR), { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isFile() && extname(entry.name).toLowerCase() === '.css')
+        .map((entry) => basename(entry.name, extname(entry.name)))
+        .filter(isValidThemeName)
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * A theme's source, or null when there is no such theme. The name is
+   * validated here as well as at the caller: it arrives from note frontmatter,
+   * which is user text that reaches this method through IPC.
+   */
+  async readTheme(name: string): Promise<string | null> {
+    const relPath = themeFilePath(name);
+    if (!relPath) return null;
+    try {
+      return await readFile(this.full(relPath), 'utf-8');
+    } catch {
+      return null;
+    }
   }
 
   setGraphPosition(path: string, x: number, y: number): void {

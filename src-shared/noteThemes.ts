@@ -184,6 +184,60 @@ interface Frame {
   declarations: boolean;
 }
 
+/** Split a selector list on commas that are not inside parens or strings. */
+function splitSelectorList(selector: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let current = '';
+  for (let i = 0; i < selector.length; i++) {
+    const ch = selector[i];
+    if (quote) {
+      current += ch;
+      if (ch === '\\' && i + 1 < selector.length) current += selector[++i];
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    else if (ch === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  return parts;
+}
+
+/**
+ * Point a leading scope class at the scope root.
+ *
+ * Inside `@scope`, a bare selector is implicitly relative to the root, so
+ * `.sk-note` matches a *nested* `.sk-note` and never the root itself. Someone
+ * writing `.sk-note { --note-measure: 62ch }` — the obvious way to set a
+ * token — would get a rule that silently does nothing. Only a leading
+ * occurrence is rewritten: `.foo .sk-note` really does mean a nested note.
+ *
+ * This is the one place the compiler touches a selector, and it can only make a
+ * rule apply where the author meant it to. Containment stays with `@scope`.
+ */
+export function rewriteScopeRoot(selector: string, scopeClass: string = THEME_SCOPE): string {
+  return splitSelectorList(selector)
+    .map((part) => {
+      const lead = part.length - part.trimStart().length;
+      const rest = part.slice(lead);
+      if (!rest.startsWith(scopeClass)) return part;
+      // `.sk-note-wide` is a different class, not the scope root.
+      const next = rest[scopeClass.length];
+      if (next !== undefined && /[A-Za-z0-9_-]/.test(next)) return part;
+      return part.slice(0, lead) + ':scope' + rest.slice(scopeClass.length);
+    })
+    .join(',');
+}
+
 /**
  * Compile a theme for injection: comments removed, unsafe declarations and
  * at-rules dropped, the remainder wrapped in `@scope`.
@@ -314,7 +368,13 @@ export function compileTheme(source: string, scope: string = THEME_SCOPE): Compi
         if (hoisted && !hoisted.endsWith('\n')) hoisted += '\n';
       }
       stack.push({ declarations: atRule === 'keyframes' ? false : declarations });
-      emit(buffer + ch);
+      // Style-rule preludes inside the scope get their leading scope class
+      // pointed at the root; hoisted rules sit outside @scope and are left be.
+      const emitPrelude =
+        !atRule && hoistFrom === null && !parent?.declarations
+          ? rewriteScopeRoot(buffer, scope)
+          : buffer;
+      emit(emitPrelude + ch);
       buffer = '';
       continue;
     }

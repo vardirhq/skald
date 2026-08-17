@@ -129,6 +129,10 @@ export interface VaultSettings {
   autosaveMs: number;
   savedSearches: SavedSearch[];
   schemaTemplates: Partial<Record<SchemaName, string>>;
+  /** Vault-wide note theme, or null for Skald's built-in surface. */
+  vaultTheme: string | null;
+  /** Per-schema note themes, chosen by the user rather than shipped. */
+  schemaThemes: Partial<Record<SchemaName, string>>;
 }
 
 export const DEFAULT_SETTINGS: VaultSettings = {
@@ -143,6 +147,8 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   autosaveMs: 800,
   savedSearches: [],
   schemaTemplates: {},
+  vaultTheme: null,
+  schemaThemes: {},
 };
 
 export interface VaultSnapshot {
