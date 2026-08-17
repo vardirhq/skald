@@ -376,30 +376,34 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .editor-frontmatter .extension-property .muted { color: var(--tx-3); }
 
 /* body markdown */
-.editor-body { font-size: 15px; line-height: 1.72; color: var(--tx-1); }
-.editor-body p { margin: 0 0 18px; text-wrap: pretty; }
+.editor-body {
+  font-family: var(--note-font-body); font-size: var(--note-size-body);
+  line-height: var(--note-line-height); color: var(--note-tx);
+  background: var(--note-bg); max-width: var(--note-measure);
+}
+.editor-body p { margin: 0 0 var(--note-space-block); text-wrap: pretty; }
 .editor-body h2 {
-  font-size: 13px; font-family: var(--font-mono); font-weight: 600;
-  letter-spacing: 0.04em; color: var(--tx-2); margin: 34px 0 14px;
+  font-size: 13px; font-family: var(--note-font-mono); font-weight: 600;
+  letter-spacing: 0.04em; color: var(--note-tx-muted); margin: var(--note-space-section) 0 14px;
   display: flex; align-items: center; gap: 10px;
 }
-.editor-body h2::before { content: "##"; color: var(--ac); opacity: 0.7; font-weight: 700; }
-.editor-body h2 .h2-text { color: var(--tx-0); font-family: var(--font-ui); font-size: 19px; letter-spacing: -0.01em; }
+.editor-body h2::before { content: "##"; color: var(--note-accent); opacity: 0.7; font-weight: 700; }
+.editor-body h2 .h2-text { color: var(--note-tx-heading); font-family: var(--note-font-heading); font-size: 19px; letter-spacing: -0.01em; }
 .editor-body a.wikilink {
-  color: var(--ac); text-decoration: none; padding: 0 1px;
+  color: var(--note-link); text-decoration: none; padding: 0 1px;
   border-bottom: 1px solid var(--ac-line); cursor: pointer;
 }
 .editor-body a.wikilink:hover { background: var(--ac-ghost); }
-.editor-body a.wikilink--missing { color: var(--err); border-bottom-color: color-mix(in oklab, var(--err) 40%, transparent); border-bottom-style: dashed; }
+.editor-body a.wikilink--missing { color: var(--note-link-missing); border-bottom-color: color-mix(in oklab, var(--note-link-missing) 40%, transparent); border-bottom-style: dashed; }
 .editor-body code {
-  font-family: var(--font-mono); font-size: 0.86em; padding: 1.5px 5px;
-  background: var(--bg-1); border: 1px solid var(--line); border-radius: 4px; color: var(--sy-orange);
+  font-family: var(--note-font-mono); font-size: 0.86em; padding: 1.5px 5px;
+  background: var(--note-code-bg); border: 1px solid var(--line); border-radius: 4px; color: var(--sy-orange);
 }
 .editor-body em { color: var(--tx-0); font-style: italic; }
 .editor-body strong { color: var(--tx-0); font-weight: 600; }
 .editor-body blockquote {
-  margin: 22px 0; padding: 4px 0 4px 18px; border-left: 2px solid var(--ac);
-  color: var(--tx-2); font-style: italic;
+  margin: 22px 0; padding: 4px 0 4px 18px; border-left: 2px solid var(--note-quote-border);
+  color: var(--note-tx-muted); font-style: italic;
 }
 .editor-body ul.tasks { list-style: none; padding: 0; margin: 4px 0 22px; display: flex; flex-direction: column; gap: 4px; }
 .editor-body ul.tasks li {
@@ -409,10 +413,10 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .editor-body ul.tasks li:hover { background: var(--bg-1); }
 .editor-body ul.tasks .task-label { flex: 1; font-size: 14px; }
 .editor-body ul.tasks li[data-done="true"] .task-label { color: var(--tx-3); text-decoration: line-through; }
-.editor-body .task-meta { font-family: var(--font-mono); font-size: 11px; }
-.editor-body .sk-task__status[data-status="working"] { color: var(--sy-blue); }
-.editor-body .sk-task__status[data-status="blocked"] { color: var(--err); }
-.editor-body .due { color: var(--warn); }
+.editor-body .task-meta { font-family: var(--note-font-mono); font-size: 11px; }
+.editor-body .sk-task__status[data-status="working"] { color: var(--note-task-working); }
+.editor-body .sk-task__status[data-status="blocked"] { color: var(--note-task-blocked); }
+.editor-body .due { color: var(--note-task-overdue); }
 .editor-body .due--ok { color: var(--tx-3); }
 
 .attachment-image {
@@ -446,8 +450,8 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
   color: var(--tx-1); font-size: 14.5px;
 }
 .editor-callout .label {
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--ac); margin-bottom: 6px;
+  font-family: var(--note-font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--note-accent); margin-bottom: 6px;
 }
 
 .github-card {

@@ -97,34 +97,41 @@ Skald does today, in every theme and density.
 }
 ```
 
+Defined in `src/styles/tokens.css` and consumed by the reading surface. Each default is the
+value the rule previously hard-coded, so the surface renders identically until a theme says
+otherwise.
+
 | Token | Default | Controls |
 | --- | --- | --- |
 | `--note-font-body` | `var(--font-ui)` | Body and list text |
 | `--note-font-heading` | `var(--font-ui)` | Headings |
-| `--note-font-mono` | `var(--font-mono)` | Code, inline and block |
-| `--note-size-body` | inherited | Base body size |
-| `--note-line-height` | inherited | Body leading |
-| `--note-scale` | `1.25` | Heading size ratio |
-| `--note-measure` | current column | Content column width |
-| `--note-space-block` | current gap | Space between blocks |
-| `--note-space-section` | current gap | Space above headings |
-| `--note-bg` | `var(--bg-2)` | Surface behind the note |
+| `--note-font-mono` | `var(--font-mono)` | Code, task meta, callout labels |
+| `--note-size-body` | `15px` | Base body size |
+| `--note-line-height` | `1.72` | Body leading |
+| `--note-measure` | `none` | Content column width |
+| `--note-space-block` | `18px` | Space below paragraphs and lists |
+| `--note-space-section` | `34px` | Space above a section heading |
+| `--note-bg` | `transparent` | Surface behind the note |
 | `--note-tx` | `var(--tx-1)` | Body text |
-| `--note-tx-muted` | `var(--tx-2)` | Captions, meta, labels |
+| `--note-tx-muted` | `var(--tx-2)` | Quotes, meta, the `h2` kicker |
 | `--note-tx-heading` | `var(--tx-0)` | Heading text |
-| `--note-accent` | `var(--ac)` | Links, markers, emphasis |
-| `--note-rule` | `var(--line-2)` | Hairlines and `<hr>` |
-| `--note-radius` | `var(--r-2)` | Cards, code, callouts |
-| `--note-code-bg` | `var(--bg-3)` | Code block surface |
-| `--note-quote-border` | `var(--line-3)` | Blockquote edge |
+| `--note-accent` | `var(--ac)` | List markers, callout label, `h2` prefix |
+| `--note-rule` | `var(--line)` | `<hr>` |
+| `--note-radius` | `var(--r-3)` | Code blocks and callouts |
+| `--note-code-bg` | `var(--bg-1)` | Code surface, block and inline |
+| `--note-quote-border` | `var(--ac)` | Blockquote edge |
 | `--note-link` | `var(--ac)` | Resolved links |
 | `--note-link-missing` | `var(--err)` | Unresolved wikilinks |
 | `--note-task-working` | `var(--sy-blue)` | `@status(working)` marker |
 | `--note-task-blocked` | `var(--err)` | `@status(blocked)` marker |
-| `--note-task-overdue` | `var(--err)` | Past-due marker |
+| `--note-task-overdue` | `var(--warn)` | Past-due marker |
 
 Tokens referencing app tokens is deliberate: a theme that only changes `--note-font-body` still
 follows Midnight, Slate, and Daybreak correctly, and still respects the density setting.
+
+There is no `--note-scale`. A heading-ratio token implies the sizes are generated from it, and
+they are not — the surface uses hand-set sizes. Shipping a token that silently does nothing is
+worse than not having one.
 
 ## Tier 2 — the class contract
 
@@ -226,15 +233,28 @@ stylesheet free to change.
 No scripts are involved: a theme is CSS, loaded from the user's own vault, and cannot execute.
 That is the whole reason this is a smaller feature than embedding HTML in notes.
 
-It still needs boundaries, because CSS can reach further than the note:
+It still needs boundaries, because CSS can reach further than the note. `compileTheme` in
+`src-shared/noteThemes.ts` applies them, and `tests/noteThemeCompiler.test.ts` covers it:
 
-- User CSS is injected into a `<style>` scoped to the reading surface with
-  `@scope (.sk-note)`, native in the Chromium version Electron ships. Where `@scope` is not
-  available, selectors are parsed and prefixed instead.
-- Rejected at load: `@import`, `url()` pointing at a remote host, and selectors targeting
-  `:root`, `html`, or `body`. Remote URLs are a tracking beacon that fires when a note opens —
-  the same rule the rest of Skald follows.
-- `position: fixed` is neutralized so a theme cannot float content over the chrome.
+- The sheet is wrapped in `@scope (.sk-note)` — native in the Chromium Electron 31 ships. This
+  is deliberately not done by rewriting selectors: rewriting means hand-parsing selector syntax,
+  and every corner missed there is a rule that escapes the note. Delegating to the engine also
+  handles `html`, `body` and `:root` for free, since none of them is inside the scope root.
+- `@import` is dropped. It fetches another stylesheet, which is both a remote load and a way
+  around everything else here.
+- `url()` must stay in the vault. Relative paths and `data:` are kept; anything with a scheme or
+  a protocol-relative `//` is dropped. A note that fetches on open is a beacon that fires when
+  you read it.
+- `position: fixed` is dropped, since a fixed box escapes the scope visually even though its
+  selector cannot.
+- `@font-face`, `@keyframes` and `@property` are lifted back out of the `@scope` block. They
+  register a name rather than match an element, so leaving them inside would silently cost a
+  theme its typeface. Their names are global, so two themes open in different tabs share a
+  namespace — worth knowing before naming a font `Body`.
+
+Nothing is removed silently: every drop is returned as a rejection carrying the source line, the
+offending text, and why, so the theme editor can show the author what happened instead of
+leaving them to wonder why one rule does nothing.
 - A **Reset this note's theme** command is always available and cannot be overridden by a
   theme. MySpace was fun because expression was unbounded and painful because pages became
   unreadable; one guaranteed escape is enough insurance.
@@ -282,12 +302,12 @@ the outline, and every part of the editor that is not the rendered note.
 
 ## Still open
 
-- The token layer is specified but not wired up. Nothing reads `--note-*` yet; the current
-  stylesheet still uses the app tokens directly.
-- Loading. Reading a theme file, scoping it, rejecting what the safety rules reject, and
-  reacting when the file changes on disk is the next real piece of work.
-- Whether the schema default is a per-schema setting or a small map, and how it rides along with
-  the rest of the settings when a vault syncs to a second device.
+- Loading. `compileTheme` and `resolveThemeName` are done and tested; reading the file from the
+  vault, applying the compiled sheet, and reacting when it changes on disk is the next piece.
+  The vault watcher already covers `themes/`, so change events come for free.
+- Settings. `vaultTheme` and `schemaThemes` need to join `VaultSettings`, alongside the
+  `schemaTemplates` map they resemble.
+- Whether a theme applies in live mode as well as read mode, or only once you stop editing.
 - Export. Resolving a theme and inlining it produces a self-contained HTML file — the artifact
   case that started this discussion — but the resolved CSS and the vault fonts both have to be
   embedded for it to survive leaving the vault.

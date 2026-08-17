@@ -175,3 +175,42 @@
 [data-density="compact"] { --row-h: 24px; --pad-pane: 22px; --gap: 14px; }
 [data-density="regular"] { --row-h: 28px; --pad-pane: 28px; --gap: 20px; }
 [data-density="cozy"]    { --row-h: 33px; --pad-pane: 40px; --gap: 28px; }
+
+/* =========================================================
+   Note surface — the published theme contract
+   Every value a note theme may override, defaulting to the
+   app token it replaced. A theme that sets one of these still
+   follows Midnight, Slate, Daybreak and the density setting;
+   see docs/note-themes.md.
+   ========================================================= */
+.sk-note {
+  /* Type */
+  --note-font-body:    var(--font-ui);
+  --note-font-heading: var(--font-ui);
+  --note-font-mono:    var(--font-mono);
+  --note-size-body:    15px;
+  --note-line-height:  1.72;
+
+  /* Measure and rhythm */
+  --note-measure:       none;
+  --note-space-block:   18px;
+  --note-space-section: 34px;
+
+  /* Colour */
+  --note-bg:         transparent;
+  --note-tx:         var(--tx-1);
+  --note-tx-muted:   var(--tx-2);
+  --note-tx-heading: var(--tx-0);
+  --note-accent:     var(--ac);
+  --note-rule:       var(--line);
+
+  /* Elements */
+  --note-radius:        var(--r-3);
+  --note-code-bg:       var(--bg-1);
+  --note-quote-border:  var(--ac);
+  --note-link:          var(--ac);
+  --note-link-missing:  var(--err);
+  --note-task-working:  var(--sy-blue);
+  --note-task-blocked:  var(--err);
+  --note-task-overdue:  var(--warn);
+}

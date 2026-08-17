@@ -106,18 +106,22 @@
 
 /* extended body elements the mock didn't render */
 .editor-body h3, .editor-body h4, .editor-body h5, .editor-body h6 {
-  font-size: 15.5px; font-weight: 600; color: var(--tx-0); margin: 26px 0 10px;
+  font-size: 15.5px; font-weight: 600; color: var(--note-tx-heading);
+  font-family: var(--note-font-heading); margin: 26px 0 10px;
 }
-.editor-body h1.body-h1 { font-size: 24px; font-weight: 700; color: var(--tx-0); margin: 30px 0 14px; letter-spacing: -0.01em; }
-.editor-body hr { border: none; border-top: 1px solid var(--line); margin: 28px 0; }
+.editor-body h1.body-h1 {
+  font-size: 24px; font-weight: 700; color: var(--note-tx-heading);
+  font-family: var(--note-font-heading); margin: 30px 0 14px; letter-spacing: -0.01em;
+}
+.editor-body hr { border: none; border-top: 1px solid var(--note-rule); margin: 28px 0; }
 .editor-body pre.codeblock {
   margin: 20px 0; padding: 14px 16px; overflow-x: auto;
-  background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-3);
-  font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; color: var(--tx-1);
+  background: var(--note-code-bg); border: 1px solid var(--line); border-radius: var(--note-radius);
+  font-family: var(--note-font-mono); font-size: 12.5px; line-height: 1.6; color: var(--tx-1);
 }
 .editor-body pre.codeblock code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; }
-.editor-body ul.plain, .editor-body ol.plain { margin: 4px 0 18px; padding-left: 24px; display: flex; flex-direction: column; gap: 5px; }
-.editor-body ul.plain li::marker { color: var(--ac); }
+.editor-body ul.plain, .editor-body ol.plain { margin: 4px 0 var(--note-space-block); padding-left: 24px; display: flex; flex-direction: column; gap: 5px; }
+.editor-body ul.plain li::marker { color: var(--note-accent); }
 .editor-body ol.plain li::marker { color: var(--tx-3); font-family: var(--font-mono); font-size: 12px; }
 .editor-empty-hint { color: var(--tx-3); font-style: italic; font-size: 14px; }
 
