@@ -1,0 +1,58 @@
+.sk-container {
+  margin: var(--note-space-block) 0;
+  min-width: 0;
+}
+
+.sk-container__content {
+  min-width: 0;
+}
+
+.sk-container--aside {
+  padding: 16px 18px;
+  border-left: 3px solid var(--note-accent);
+  border-radius: 0 var(--note-radius) var(--note-radius) 0;
+  background: color-mix(in srgb, var(--note-accent) 7%, transparent);
+}
+
+.sk-container--aside > .sk-container__content > :first-child,
+.sk-container--gallery > .sk-container__content > :first-child,
+.sk-container--group > .sk-container__content > :first-child {
+  margin-top: 0;
+}
+
+.sk-container--aside > .sk-container__content > :last-child,
+.sk-container--gallery > .sk-container__content > :last-child,
+.sk-container--group > .sk-container__content > :last-child {
+  margin-bottom: 0;
+}
+
+.sk-container--gallery > .sk-container__content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.sk-container--gallery .sk-figure {
+  display: block;
+  margin: 0;
+}
+
+.sk-container--gallery .sk-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--note-radius);
+}
+
+.sk-container--group {
+  padding: 16px 18px;
+  border: 1px solid var(--note-rule);
+  border-radius: var(--note-radius);
+}
+
+/*
+ * These are intentionally modest defaults. Semantic containers describe what
+ * content is, not where it must sit. Vault themes are expected to replace this
+ * presentation through the public .sk-container* contract.
+ */
