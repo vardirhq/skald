@@ -11,9 +11,7 @@ export type MarkdownBlockKind =
 export type SemanticContainerKind = 'aside' | 'gallery' | 'group';
 
 export interface SourceRange {
-  /** Zero-based inclusive source line. */
   startLine: number;
-  /** Zero-based inclusive source line. */
   endLine: number;
 }
 
@@ -63,15 +61,8 @@ const OL_LINE = /^\s*\d+[.)]\s+/;
 const HR_LINE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
 const CONTAINER_OPEN = /^\s*:::(aside|gallery|group)\s*$/;
 const CONTAINER_CLOSE = /^\s*:::\s*$/;
+const CODE_FENCE = /^\s*```/;
 
-/**
- * Parse Skald-flavoured Markdown into the runtime document tree.
- *
- * Markdown remains canonical. This tree is deliberately source-aware and
- * lossless: every node retains its original Markdown and source line range.
- * V1 semantic containers may contain ordinary Markdown blocks, but not other
- * semantic containers.
- */
 export function parseDocumentTree(source: string): MarkdownDocument {
   const lines = source.length === 0 ? [''] : source.split('\n');
   const children: DocumentNode[] = [];
@@ -89,10 +80,10 @@ export function parseDocumentTree(source: string): MarkdownDocument {
 
     const start = i;
     const kind = opener[1] as SemanticContainerKind;
-    let end = i + 1;
-    while (end < lines.length && !CONTAINER_CLOSE.test(lines[end])) end++;
+    const boundary = scanContainer(lines, start + 1);
+    const end = boundary.end;
 
-    if (end >= lines.length) {
+    if (end === null) {
       diagnostics.push({
         code: 'unclosed-container',
         startLine: start,
@@ -105,12 +96,11 @@ export function parseDocumentTree(source: string): MarkdownDocument {
       continue;
     }
 
-    const nestedLine = lines.slice(start + 1, end).findIndex((line) => CONTAINER_OPEN.test(line));
-    if (nestedLine >= 0) {
+    for (const nestedLine of boundary.nestedOpeners) {
       diagnostics.push({
         code: 'nested-container',
-        startLine: start + 1 + nestedLine,
-        endLine: start + 1 + nestedLine,
+        startLine: nestedLine,
+        endLine: nestedLine,
         message: 'Semantic containers cannot be nested in the v1 document model.',
       });
     }
@@ -138,7 +128,6 @@ export function parseDocumentTree(source: string): MarkdownDocument {
   return { type: 'document', source, children, diagnostics };
 }
 
-/** Return ordinary editable blocks while retaining their semantic parent. */
 export function flattenEditableBlocks(document: MarkdownDocument): EditableMarkdownBlock[] {
   return document.children.flatMap((node) => {
     if (node.type === 'block') return [node];
@@ -154,7 +143,6 @@ export function flattenEditableBlocks(document: MarkdownDocument): EditableMarkd
   });
 }
 
-/** Serialize the runtime tree back to Skald Markdown. */
 export function serializeDocumentTree(document: MarkdownDocument): string {
   return document.children.map(serializeNode).join('\n');
 }
@@ -166,6 +154,23 @@ export function serializeNode(node: DocumentNode): string {
 
 export function isSemanticContainerKind(value: string): value is SemanticContainerKind {
   return value === 'aside' || value === 'gallery' || value === 'group';
+}
+
+function scanContainer(lines: string[], start: number): { end: number | null; nestedOpeners: number[] } {
+  const nestedOpeners: number[] = [];
+  let inCodeFence = false;
+
+  for (let i = start; i < lines.length; i++) {
+    if (CODE_FENCE.test(lines[i])) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (inCodeFence) continue;
+    if (CONTAINER_CLOSE.test(lines[i])) return { end: i, nestedOpeners };
+    if (CONTAINER_OPEN.test(lines[i])) nestedOpeners.push(i);
+  }
+
+  return { end: null, nestedOpeners };
 }
 
 function parseFlatRange(lines: string[], sourceOffset: number): MarkdownBlockNode[] {
@@ -185,18 +190,17 @@ function parseFlatBlock(
   index: number,
   sourceOffset = 0
 ): { node: MarkdownBlockNode; next: number } {
-  let i = index;
-  const line = lines[i] ?? '';
+  const line = lines[index] ?? '';
   let kind: MarkdownBlockKind;
-  let end = i;
+  let end = index;
 
   if (!line.trim()) {
     kind = 'blank';
     while (end + 1 < lines.length && !lines[end + 1].trim()) end++;
-  } else if (/^\s*```/.test(line)) {
+  } else if (CODE_FENCE.test(line)) {
     kind = 'code';
     end++;
-    while (end < lines.length && !/^\s*```/.test(lines[end])) end++;
+    while (end < lines.length && !CODE_FENCE.test(lines[end])) end++;
     if (end >= lines.length) end = lines.length - 1;
   } else if (/^(#{1,6})\s+/.test(line)) {
     kind = 'heading';
