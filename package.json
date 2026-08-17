@@ -1,6 +1,6 @@
 {
   "name": "skald",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "A local-first, schema-aware Markdown knowledge base",
   "main": "dist-electron/main.js",
   "type": "module",
