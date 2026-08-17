@@ -39,6 +39,7 @@ import {
 } from '../editor/insertions';
 import { InsertMenu } from './InsertMenu';
 import { OPEN_INSERT_MENU_EVENT } from '../editor/events';
+import { useNoteTheme } from '../useNoteTheme';
 
 type EditorMode = 'live' | 'preview' | 'source';
 
@@ -309,6 +310,9 @@ export function EditorView({
     lineOffset: bodyStartLine,
     frontmatter: parsedContent.frontmatter,
   };
+
+  // Applies the note's theme, if it has one, for as long as it is open.
+  useNoteTheme(parsedContent.frontmatter, meta?.schema ?? null, snapshot.settings, snapshot);
 
   const noteTasks = snapshot.tasks.filter((t) => t.notePath === path);
   const fmEntries = Object.entries(parsedContent.frontmatter).filter(
@@ -581,7 +585,7 @@ export function EditorView({
                   onSelectionChange={(selection) => { liveSelectionRef.current = selection; }}
                 />
               ) : (
-                <div className="editor-body">
+                <div className="editor-body sk-note">
                   {body.trim() ? (
                     renderMarkdown(body, mdCtx)
                   ) : (
@@ -1203,7 +1207,7 @@ function LiveMarkdownEditor({
   };
 
   return (
-    <div className="editor-body editor-body--live">
+    <div className="editor-body editor-body--live sk-note">
       {blocks.map((block, index) => {
         if (index === activeIndex) {
           return (

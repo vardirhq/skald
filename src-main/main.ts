@@ -226,6 +226,8 @@ function registerIpc() {
   );
 
   // ----- settings / graph -----
+  ipcMain.handle('theme:list', () => requireVault().listThemes());
+  ipcMain.handle('theme:read', (_e, name: string) => requireVault().readTheme(name));
   ipcMain.handle('settings:set', (_e, patch: Partial<VaultSettings>) =>
     requireVault().setSettings(patch)
   );

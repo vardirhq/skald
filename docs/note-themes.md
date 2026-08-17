@@ -1,6 +1,9 @@
 # Note themes
 
-A design proposal, not yet implemented.
+Themes load and apply. Put a `.css` file in the vault's `themes/` folder, name it from a note's
+frontmatter, and that note is restyled. What is not built yet is any UI: no theme picker, no
+editor, no way to see what the compiler rejected. Until those exist this is a feature you drive
+by writing files, and the rejections are returned to the renderer but not yet shown anywhere.
 
 Skald renders Markdown into a fixed reading surface. A note theme lets the person who owns the
 vault restyle that surface: a plain CSS file, written by them, living in their vault, applied to
@@ -41,6 +44,14 @@ default applies; otherwise the vault default; otherwise Skald's built-in surface
 vault defaults are set by the user, never shipped by Skald — the app does not decide what a
 `Person` note should look like.
 
+The schema and vault defaults themselves are stored in Skald settings, not in a vault file. They
+are preferences of the same kind as the surface theme and density, which already live there, and
+one string per schema does not justify inventing a file format and a parser for it. The
+distinction that matters is the one `.skald/` already draws: theme *files* are the user's
+writing and belong in the vault, while the *mapping* is app state. Losing the mapping loses a
+preference — every note still renders, on the default surface — whereas losing the themes would
+lose work.
+
 An unknown or missing `style:` falls back to the default surface silently, the same rule the
 extension registry already applies to unknown components. A theme that cannot be found is never
 a broken note.
@@ -55,11 +66,18 @@ So Skald publishes a deliberate skin — prefixed classes emitted *in addition t
 internal ones. Internal names (`body-h1`, `editor-callout`, `h2-text`) stay private and
 refactorable. Only the `sk-` surface is promised.
 
-Every theme declares the contract version it was written against, as the first line of the file:
+Every theme declares the contract version it was written against, as a custom property on the
+scope root:
 
 ```css
-/* skald-theme: 1 */
+.sk-note { --skald-theme: 1; }
 ```
+
+A leading `/* skald-theme: 1 */` comment reads more naturally, but it has to be string-matched
+before the CSS is parsed, and comments are the first thing a minifier or an unfamiliar formatter
+throws away. A custom property is inside the language: it survives any CSS-aware tooling and can
+be read back through the CSSOM after the sheet is loaded. A theme that declares nothing is
+treated as version 1.
 
 When the contract changes incompatibly, v1 themes keep rendering under v1 rules. A note written
 in 2026 does not break because the renderer improved in 2028.
@@ -81,83 +99,90 @@ Skald does today, in every theme and density.
 }
 ```
 
+Defined in `src/styles/tokens.css` and consumed by the reading surface. Each default is the
+value the rule previously hard-coded, so the surface renders identically until a theme says
+otherwise.
+
 | Token | Default | Controls |
 | --- | --- | --- |
 | `--note-font-body` | `var(--font-ui)` | Body and list text |
 | `--note-font-heading` | `var(--font-ui)` | Headings |
-| `--note-font-mono` | `var(--font-mono)` | Code, inline and block |
-| `--note-size-body` | inherited | Base body size |
-| `--note-line-height` | inherited | Body leading |
-| `--note-scale` | `1.25` | Heading size ratio |
-| `--note-measure` | current column | Content column width |
-| `--note-space-block` | current gap | Space between blocks |
-| `--note-space-section` | current gap | Space above headings |
-| `--note-bg` | `var(--bg-2)` | Surface behind the note |
+| `--note-font-mono` | `var(--font-mono)` | Code, task meta, callout labels |
+| `--note-size-body` | `15px` | Base body size |
+| `--note-line-height` | `1.72` | Body leading |
+| `--note-measure` | `none` | Content column width |
+| `--note-space-block` | `18px` | Space below paragraphs and lists |
+| `--note-space-section` | `34px` | Space above a section heading |
+| `--note-bg` | `transparent` | Surface behind the note |
 | `--note-tx` | `var(--tx-1)` | Body text |
-| `--note-tx-muted` | `var(--tx-2)` | Captions, meta, labels |
+| `--note-tx-muted` | `var(--tx-2)` | Quotes, meta, the `h2` kicker |
 | `--note-tx-heading` | `var(--tx-0)` | Heading text |
-| `--note-accent` | `var(--ac)` | Links, markers, emphasis |
-| `--note-rule` | `var(--line-2)` | Hairlines and `<hr>` |
-| `--note-radius` | `var(--r-2)` | Cards, code, callouts |
-| `--note-code-bg` | `var(--bg-3)` | Code block surface |
-| `--note-quote-border` | `var(--line-3)` | Blockquote edge |
+| `--note-accent` | `var(--ac)` | List markers, callout label, `h2` prefix |
+| `--note-rule` | `var(--line)` | `<hr>` |
+| `--note-radius` | `var(--r-3)` | Code blocks and callouts |
+| `--note-code-bg` | `var(--bg-1)` | Code surface, block and inline |
+| `--note-quote-border` | `var(--ac)` | Blockquote edge |
 | `--note-link` | `var(--ac)` | Resolved links |
 | `--note-link-missing` | `var(--err)` | Unresolved wikilinks |
 | `--note-task-working` | `var(--sy-blue)` | `@status(working)` marker |
 | `--note-task-blocked` | `var(--err)` | `@status(blocked)` marker |
-| `--note-task-overdue` | `var(--err)` | Past-due marker |
+| `--note-task-overdue` | `var(--warn)` | Past-due marker |
 
 Tokens referencing app tokens is deliberate: a theme that only changes `--note-font-body` still
 follows Midnight, Slate, and Daybreak correctly, and still respects the density setting.
 
+There is no `--note-scale`. A heading-ratio token implies the sizes are generated from it, and
+they are not — the surface uses hand-set sizes. Shipping a token that silently does nothing is
+worse than not having one.
+
 ## Tier 2 — the class contract
 
-Version 1 promises these names. Elements marked *new* do not exist yet; see
-[Renderer changes](#renderer-changes-required) below.
+Version 1 promises these names, and `src/markdown.tsx` emits all of them today. The third column
+is the internal class each one sits beside — private, and free to change.
 
 **Container**
 
-| Class | Element | Notes |
+| Class | Element | Internal companion |
 | --- | --- | --- |
-| `.sk-note` | wrapper | *new* — the scope root. Carries `data-schema`. |
+| `.sk-note` | reading surface | `.editor-body`, in both read and live mode |
 
 **Blocks**
 
-| Class | Element | Currently |
+| Class | Element | Internal companion |
 | --- | --- | --- |
-| `.sk-p` | `<p>` | no class |
+| `.sk-p` | `<p>` | — |
 | `.sk-h1` | `<h1>` | `.body-h1` |
-| `.sk-h2` | `<h2>` | no class; inner `.h2-text` span is private |
-| `.sk-h3` | `<h3>` | no class |
-| `.sk-quote` | `<blockquote>` | no class |
+| `.sk-h2` | `<h2>` | — (inner `.h2-text` span is private) |
+| `.sk-h3` … `.sk-h6` | `<h3>` … `<h6>` | — |
+| `.sk-quote` | `<blockquote>` | — |
 | `.sk-callout` | `<div>` | `.editor-callout` |
 | `.sk-callout__label` | `<div>` | `.label` |
-| `.sk-code` | `<pre>` | `.codeblock`, keeps `data-lang` |
-| `.sk-rule` | `<hr>` | no class |
-| `.sk-list` | `<ul>` | `.plain` |
+| `.sk-code` | `<pre>` | `.codeblock`, plus `data-lang` |
+| `.sk-rule` | `<hr>` | — |
+| `.sk-list` | `<ul>`, `<ol>` | `.plain` |
 | `.sk-list--ordered` | `<ol>` | `.plain` |
-| `.sk-list__item` | `<li>` | no class |
+| `.sk-list__item` | `<li>` | — |
 
 **Tasks**
 
-| Class | Element | Currently |
+| Class | Element | Internal companion |
 | --- | --- | --- |
 | `.sk-tasks` | `<ul>` | `.tasks` |
-| `.sk-task` | `<li>` | no class; keeps `data-done` |
-| `.sk-task__box` | `<span>` | `.checkbox`; keeps `data-done` |
+| `.sk-task` | `<li>` | —, plus `data-done` |
+| `.sk-task__box` | `<span>` | `.checkbox`, plus `data-done` |
 | `.sk-task__label` | `<span>` | `.task-label` |
 | `.sk-task__meta` | `<span>` | `.task-meta` |
-| `.sk-task__status` | `<span>` | *new* — carries `data-status` |
-| `.sk-task__due` | `<span>` | `.due` / `.due--ok`; gains `data-overdue` |
+| `.sk-task__status` | `<span>` | —, plus `data-status` |
+| `.sk-task__due` | `<span>` | `.due` / `.due--ok`, plus `data-overdue` |
 
 **Inline**
 
-| Class | Element | Currently |
+| Class | Element | Internal companion |
 | --- | --- | --- |
 | `.sk-wikilink` | `<a>` | `.wikilink` |
 | `.sk-wikilink--missing` | `<a>` | `.wikilink--missing` |
-| `.sk-link` | `<a>` | *new* — external links, today indistinguishable |
-| `.sk-code-inline` | `<code>` | no class |
+| `.sk-link` | `<a>` | `.wikilink` — outbound links, styled alike for now |
+| `.sk-code-inline` | `<code>` | — |
 | `.sk-figure` | `<span>` | `.attachment-image` |
 | `.sk-figure__caption` | `<span>` | `.attachment-image__caption` |
 | `.sk-figure--missing` | `<span>` | `.attachment--missing` |
@@ -165,60 +190,96 @@ Version 1 promises these names. Elements marked *new* do not exist yet; see
 | `.sk-file__icon` | `<span>` | `.attachment-card__icon` |
 | `.sk-file__text` | `<span>` | `.attachment-card__text` |
 
+`tests/noteThemes.test.ts` pins these names. A rename that breaks someone's theme should fail
+there first.
+
 `<strong>`, `<em>`, `<del>`, `<br>`, and `<img>` carry no class and are targeted by tag. The
 `data-done`, `data-lang`, `data-status`, `data-overdue`, and `data-schema` attributes are part
 of the contract and can be selected on.
 
-## Renderer changes required
+## Renderer groundwork
 
-`src/markdown.tsx` cannot back this contract as written. Five things need fixing first, and all
-of them are cheaper to fix now than after themes exist in the wild.
+Five things blocked the contract. All are now fixed, and every one of them was a latent problem
+in the renderer regardless of whether themes ever ship.
 
-**No wrapper element.** `renderMarkdown` returns a bare array of nodes, dropped into
-`.editor-body` (`Editor.tsx:584`, `Editor.tsx:1206`) alongside editor furniture like
-`.live-block` and its textareas. There is no element that means "the note and only the note", so
-there is nothing to scope a theme to. `.sk-note` has to be introduced.
+**No wrapper element.** `renderMarkdown` returns a bare array of nodes, and in live mode it runs
+once *per block* (`Editor.tsx:1348`), so the renderer is the wrong place to emit a container. But
+`.editor-body` already is the note surface in both paths, so `.sk-note` joins it there rather
+than introducing a node — no new DOM, no layout change.
 
-**`h2` wraps its text in a presentational span.** `markdown.tsx:114` renders
-`<h2><span className="h2-text">`. That span is an implementation detail of the current heading
-treatment. The public class goes on the `<h2>`; the span stays private and removable.
+**`h2` wrapped its text in a presentational span.** The `.h2-text` span is an implementation
+detail of the current heading treatment; the public class now sits on the `<h2>` itself, leaving
+the span private and removable.
 
-**`h4`–`h6` silently become `<h3>`.** The `else` branch at `markdown.tsx:117` catches every
-level above 2. The contract therefore cannot offer `.sk-h4` and beyond. Either the renderer
-learns the remaining levels, or the collapse is documented as intended — but it should be a
-decision, not an accident inherited by every future theme.
+**`h4`–`h6` silently became `<h3>`.** Fixed: each level keeps its own tag. The deciding evidence
+was in the stylesheet — `app.css` already styled `h3, h4` together, anticipating an `h4` the
+renderer never emitted. That makes the collapse an accident rather than a considered reading
+experience, and it cost heading fidelity in the DOM and its anchors quite apart from themes.
+`h5` and `h6` joined that rule so the surface stays coherent.
 
-**External links are indistinguishable from wikilinks.** `markdown.tsx:382` gives an external
-`[text](url)` the same `wikilink` class as an internal `[[Note]]`. No theme can style them
-differently. `.sk-link` has to be a real, separate class before the contract is published.
+**External links were indistinguishable from wikilinks.** An outbound `[text](url)` carried the
+same `wikilink` class as `[[Note]]`. It still shares the internal class, so nothing looks
+different today, but `.sk-link` now makes the two separable by a theme.
 
-**Task status colours are inline styles.** `markdown.tsx:196-197` writes
-`style={{ color: 'var(--sy-blue)' }}` for working and `var(--err)` for blocked. Inline styles
-beat any stylesheet rule that is not `!important`, so a theme literally cannot restyle them.
-These become `.sk-task__status[data-status]` reading the tokens above.
+**Task status colours were inline styles.** `style={{ color: 'var(--sy-blue)' }}` outranks every
+rule a theme could write short of `!important`. Status is now `.sk-task__status[data-status]`,
+coloured from the stylesheet.
 
-Note also that several current names are generic enough to be hazardous as public API — `.label`
-inside a callout, `.plain` on lists, `.checkbox`, and `.editor-callout`, which reads as chrome
-because it is adjacent to chrome. Emitting the `sk-` names alongside them, rather than renaming,
-keeps the app's own stylesheet free to change.
+Several internal names are generic enough to be hazardous as public API — `.label` inside a
+callout, `.plain` on lists, and `.checkbox`, which base.css shares with the margin panel.
+Emitting the `sk-` names alongside them rather than renaming is what keeps the app's own
+stylesheet free to change.
 
 ## Scoping and safety
 
 No scripts are involved: a theme is CSS, loaded from the user's own vault, and cannot execute.
 That is the whole reason this is a smaller feature than embedding HTML in notes.
 
-It still needs boundaries, because CSS can reach further than the note:
+It still needs boundaries, because CSS can reach further than the note. `compileTheme` in
+`src-shared/noteThemes.ts` applies them, and `tests/noteThemeCompiler.test.ts` covers it:
 
-- User CSS is injected into a `<style>` scoped to the reading surface with
-  `@scope (.sk-note)`, native in the Chromium version Electron ships. Where `@scope` is not
-  available, selectors are parsed and prefixed instead.
-- Rejected at load: `@import`, `url()` pointing at a remote host, and selectors targeting
-  `:root`, `html`, or `body`. Remote URLs are a tracking beacon that fires when a note opens —
-  the same rule the rest of Skald follows.
-- `position: fixed` is neutralized so a theme cannot float content over the chrome.
+- The sheet is wrapped in `@scope (.sk-note)` — native in the Chromium Electron 31 ships. This
+  is deliberately not done by rewriting selectors: rewriting means hand-parsing selector syntax,
+  and every corner missed there is a rule that escapes the note. Delegating to the engine also
+  handles `html`, `body` and `:root` for free, since none of them is inside the scope root.
+- One selector *is* rewritten, and it is a correctness fix rather than a containment one. Inside
+  `@scope`, a bare selector is implicitly relative to the root, so `.sk-note` matches a *nested*
+  note and never the root itself — which would make `.sk-note { --note-measure: 62ch }`, the
+  obvious way to set a token, silently do nothing. A leading scope class is therefore rewritten
+  to `:scope`. A non-leading one (`.foo .sk-note`) is left alone, because there it really does
+  mean a nested note. Getting this wrong can only fail to apply a rule; it cannot let one out.
+- `@import` is dropped. It fetches another stylesheet, which is both a remote load and a way
+  around everything else here.
+- `url()` must stay in the vault. Relative paths and `data:` are kept; anything with a scheme or
+  a protocol-relative `//` is dropped. A note that fetches on open is a beacon that fires when
+  you read it.
+- `position: fixed` is dropped, since a fixed box escapes the scope visually even though its
+  selector cannot.
+- `@font-face`, `@keyframes` and `@property` are lifted back out of the `@scope` block. They
+  register a name rather than match an element, so leaving them inside would silently cost a
+  theme its typeface. Their names land in the document's namespace; only one editor is mounted
+  at a time, so only one theme is ever live and they cannot collide with each other.
+
+Both behaviours above were confirmed against real Chromium rather than reasoned about: a scoped
+sheet declaring `html, body, :root { background: red }` leaves the page background untouched, a
+`.sk-p` outside the note stays unstyled while the one inside picks the theme up, a nested
+`@media` still applies, and a hoisted `@font-face` registers. The check ran on Chromium 141;
+Electron 31 ships 126, and `@scope` has behaved this way since 118.
+
+Nothing is removed silently: every drop is returned as a rejection carrying the source line, the
+offending text, and why, so the theme editor can show the author what happened instead of
+leaving them to wonder why one rule does nothing.
 - A **Reset this note's theme** command is always available and cannot be overridden by a
   theme. MySpace was fun because expression was unbounded and painful because pages became
   unreadable; one guaranteed escape is enough insurance.
+
+One consequence of `.sk-note` living on `.editor-body` is that in live mode the scope root also
+contains the editing furniture — `.live-block` and its textarea. Some inheritance there is
+desirable, since a raw block should plausibly carry the note's body font, but a theme must not be
+able to make the block being edited unusable. Those internal classes are outside the contract,
+and the loader should re-assert the essentials for `.live-block__textarea` after the theme so
+editing survives any stylesheet. This is the one place where a theme can reach something that is
+not the note.
 
 ## Fonts
 
@@ -253,14 +314,30 @@ Extension-rendered DOM — Mermaid's SVG, GitHub cards — belongs to those exte
 versioned with them, not here. So does the frontmatter property chrome, the backlinks margin,
 the outline, and every part of the editor that is not the rendered note.
 
-## Open questions
+## How it is wired
 
-- Where the version marker lives. A leading CSS comment is readable and survives hand-editing,
-  but it is fragile to reformatting; a custom property on `.sk-note` is more robust and uglier.
-- Whether schema defaults are stored in Skald settings or as a file in the vault. Settings are
-  simpler; a file is consistent with themes surviving the app.
-- Whether `h4`–`h6` justify the renderer change, or the collapse to `h3` is the intended reading
-  experience.
+`Vault.listThemes` and `Vault.readTheme` expose the folder over the `theme:list` and
+`theme:read` channels. `readTheme` re-validates the name even though the caller already did:
+`style:` is note frontmatter, which is user text arriving through IPC, and `full()` guards the
+path a second time after that.
+
+In the renderer, `useNoteTheme` resolves the name, reads the file, compiles it and applies the
+result to a single `<style>` element — one editor is mounted at a time, so one sheet is live at
+a time. It takes the vault snapshot as a dependency, so editing a theme file on disk reapplies
+it: the watcher already covers `themes/`, and no dedicated channel was needed.
+
+`vaultTheme` and `schemaThemes` sit in `VaultSettings` beside the `schemaTemplates` map they
+resemble.
+
+## Still open
+
+- Every piece of UI. A picker, the token controls, the editor with live preview, and somewhere
+  to surface rejections. The compiler already returns them with line, text and reason; nothing
+  displays them yet.
+- Whether a theme should apply while editing a block in live mode, or only to rendered blocks.
+- The `.sk-note` scope root also contains `.live-block__textarea`. Re-asserting the essentials
+  for it after the theme, so no stylesheet can make the block you are editing unusable, is not
+  done.
 - Export. Resolving a theme and inlining it produces a self-contained HTML file — the artifact
   case that started this discussion — but the resolved CSS and the vault fonts both have to be
   embedded for it to survive leaving the vault.
