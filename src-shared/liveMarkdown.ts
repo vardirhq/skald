@@ -1,12 +1,11 @@
-export type MarkdownBlockKind =
-  | 'blank'
-  | 'heading'
-  | 'code'
-  | 'quote'
-  | 'task'
-  | 'list'
-  | 'rule'
-  | 'paragraph';
+import {
+  flattenEditableBlocks,
+  parseDocumentTree,
+  type MarkdownBlockKind,
+  type SemanticContainerKind,
+} from './documentTree';
+
+export type { MarkdownBlockKind } from './documentTree';
 
 export interface MarkdownBlock {
   id: string;
@@ -14,101 +13,28 @@ export interface MarkdownBlock {
   startLine: number;
   endLine: number;
   raw: string;
+  container?: {
+    id: string;
+    kind: SemanticContainerKind;
+    startLine: number;
+    endLine: number;
+  };
 }
 
-const TASK_LINE = /^\s*[-*+]\s+\[( |x|X)\]\s+/;
-const UL_LINE = /^\s*[-*+]\s+(?!\[[ xX]\]\s)/;
-const OL_LINE = /^\s*\d+[.)]\s+/;
-const HR_LINE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
-
+/**
+ * Compatibility projection for the live editor.
+ *
+ * The runtime model is a tree, but the current editor still edits one ordinary
+ * Markdown block at a time. Container fences therefore do not become giant
+ * editable pseudo-blocks: their children are returned as the same block types
+ * the editor already understands, annotated with their semantic parent.
+ */
 export function splitMarkdownBlocks(body: string): MarkdownBlock[] {
-  if (body.length === 0) {
+  const blocks = flattenEditableBlocks(parseDocumentTree(body));
+  if (blocks.length === 0 && body.length === 0) {
     return [{ id: 'b0-0', kind: 'blank', startLine: 0, endLine: 0, raw: '' }];
   }
-
-  const lines = body.split('\n');
-  const blocks: MarkdownBlock[] = [];
-  let i = 0;
-
-  const push = (kind: MarkdownBlockKind, start: number, end: number) => {
-    blocks.push({
-      id: `b${start}-${end}`,
-      kind,
-      startLine: start,
-      endLine: end,
-      raw: lines.slice(start, end + 1).join('\n'),
-    });
-  };
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    if (!line.trim()) {
-      const start = i;
-      while (i < lines.length && !lines[i].trim()) i++;
-      push('blank', start, i - 1);
-      continue;
-    }
-
-    if (/^\s*```/.test(line)) {
-      const start = i;
-      i++;
-      while (i < lines.length && !/^\s*```/.test(lines[i])) i++;
-      if (i < lines.length) i++;
-      push('code', start, i - 1);
-      continue;
-    }
-
-    if (/^(#{1,6})\s+/.test(line)) {
-      push('heading', i, i);
-      i++;
-      continue;
-    }
-
-    if (HR_LINE.test(line)) {
-      push('rule', i, i);
-      i++;
-      continue;
-    }
-
-    if (/^\s*>/.test(line)) {
-      const start = i;
-      while (i < lines.length && /^\s*>/.test(lines[i])) i++;
-      push('quote', start, i - 1);
-      continue;
-    }
-
-    if (TASK_LINE.test(line)) {
-      const start = i;
-      while (i < lines.length && TASK_LINE.test(lines[i])) i++;
-      push('task', start, i - 1);
-      continue;
-    }
-
-    if (UL_LINE.test(line) || OL_LINE.test(line)) {
-      const start = i;
-      const matcher = UL_LINE.test(line) ? UL_LINE : OL_LINE;
-      while (i < lines.length && matcher.test(lines[i])) i++;
-      push('list', start, i - 1);
-      continue;
-    }
-
-    const start = i;
-    while (
-      i < lines.length &&
-      lines[i].trim() &&
-      !/^\s*(#{1,6}\s|>|```)/.test(lines[i]) &&
-      !TASK_LINE.test(lines[i]) &&
-      !UL_LINE.test(lines[i]) &&
-      !OL_LINE.test(lines[i]) &&
-      !HR_LINE.test(lines[i])
-    ) {
-      i++;
-    }
-    push('paragraph', start, i - 1);
-  }
-
-  return blocks;
+  return blocks.map(({ type: _type, parentContainerId: _parentId, parentContainerKind: _parentKind, ...block }) => block);
 }
 
 // ---------- caret arithmetic ----------
@@ -137,7 +63,6 @@ const WHITESPACE = /\s/;
 const LIST_PREFIX = /^(\s*)([-*+]\s+\[[ xX]\]\s+|[-*+]\s+|(\d+)([.)])\s+)/;
 const QUOTE_PREFIX = /^(\s*>\s?)/;
 
-
 /**
  * Maps a position in a block's *rendered* text back to an offset in its
  * Markdown source.
@@ -163,9 +88,6 @@ export function sourceOffsetFromRendered(raw: string, rendered: string): number 
     if (WHITESPACE.test(rendered[shown])) {
       while (shown < rendered.length && WHITESPACE.test(rendered[shown])) shown++;
       while (source < raw.length && WHITESPACE.test(raw[source])) source++;
-      // Landing at the start of a source line means the marker that opens it —
-      // a bullet, a number, a quote caret — is still ahead. A reader who clicks
-      // the start of a list item means its text, not its bullet.
       if (source > 0 && raw[source - 1] === '\n') {
         const rest = raw.slice(source);
         const marker = LIST_PREFIX.exec(rest)?.[0] ?? QUOTE_PREFIX.exec(rest)?.[1];
@@ -197,7 +119,6 @@ export interface CaretEdit {
 function nextMarker(prefix: string): string {
   const ordered = /^(\s*)(\d+)([.)])(\s+)$/.exec(prefix);
   if (ordered) return `${ordered[1]}${Number(ordered[2]) + 1}${ordered[3]}${ordered[4]}`;
-  // A checked box does not carry its tick to the next item.
   return prefix.replace(/\[[xX]\]/, '[ ]');
 }
 
@@ -224,8 +145,7 @@ export function softBreakInBlock(kind: MarkdownBlockKind, raw: string, caret: nu
 /**
  * Enter. Inside a list it opens the next item; on an empty item it leaves the
  * list; inside code it is just a newline. Everywhere else it ends this block
- * and opens a new one, which is the thing the editor was failing to do — the
- * newline used to fall out of the block being edited and strand the caret.
+ * and opens a new one.
  */
 export function enterInBlock(kind: MarkdownBlockKind, raw: string, caret: number): CaretEdit {
   const before = raw.slice(0, caret);
@@ -240,7 +160,6 @@ export function enterInBlock(kind: MarkdownBlockKind, raw: string, caret: number
     if (match) {
       const marker = match[0];
       if (line.trim() === marker.trim()) {
-        // An empty item means "I am done listing". Drop it and start a block.
         const head = raw.slice(0, start).replace(/\n$/, '');
         const tail = raw.slice(end);
         const joined = head ? `${head}\n\n` : '';
@@ -260,8 +179,6 @@ export function enterInBlock(kind: MarkdownBlockKind, raw: string, caret: number
     }
   }
 
-  // End this block and open the next. The blank line between them is what makes
-  // them two blocks rather than one paragraph with a newline in it.
   const head = before.replace(/[ \t]+$/, '');
   return { raw: `${head}\n\n${after}`, caret: head.length + 2 };
 }
