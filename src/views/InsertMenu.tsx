@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InsertCategory, InsertMenuItem } from '../editor/insertions';
 import { matchesInsertion } from '../editor/insertions';
 
-const categories: InsertCategory[] = ['Text', 'Lists', 'Blocks', 'Extensions'];
+const categories: InsertCategory[] = ['Text', 'Lists', 'Blocks', 'Containers', 'Extensions'];
 
 export function InsertMenu({
   items,
@@ -35,7 +35,7 @@ export function InsertMenu({
           <input
             ref={inputRef}
             value={query}
-            placeholder="Insert heading, task, diagram…"
+            placeholder="Insert heading, task, container, diagram…"
             aria-label="Search things to insert"
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
@@ -111,6 +111,9 @@ function glyph(id: string): string {
   if (id.includes('diagram')) return '◇';
   if (id.includes('github')) return '⌁';
   if (id.includes('code')) return '</>';
+  if (id.includes('aside')) return '◧';
+  if (id.includes('gallery')) return '▦';
+  if (id.includes('group')) return '▣';
   if (id.includes('quote') || id.includes('callout')) return '❯';
   return '+';
 }
