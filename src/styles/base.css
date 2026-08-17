@@ -410,6 +410,8 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .editor-body ul.tasks .task-label { flex: 1; font-size: 14px; }
 .editor-body ul.tasks li[data-done="true"] .task-label { color: var(--tx-3); text-decoration: line-through; }
 .editor-body .task-meta { font-family: var(--font-mono); font-size: 11px; }
+.editor-body .sk-task__status[data-status="working"] { color: var(--sy-blue); }
+.editor-body .sk-task__status[data-status="blocked"] { color: var(--err); }
 .editor-body .due { color: var(--warn); }
 .editor-body .due--ok { color: var(--tx-3); }
 

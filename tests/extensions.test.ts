@@ -102,7 +102,8 @@ describe('ExtensionRegistry', () => {
       frontmatter: {},
     };
     const node = renderMarkdown('> [!future] still readable', context)[0] as ReactElement<{ className: string }>;
-    expect(node.props.className).toBe('editor-callout');
+    expect(node.props.className.split(' ')).toContain('editor-callout');
+    expect(node.props.className.split(' ')).toContain('sk-callout');
   });
 
   it('keeps unknown fenced languages as ordinary code blocks', () => {
@@ -119,7 +120,8 @@ describe('ExtensionRegistry', () => {
       frontmatter: {},
     };
     const node = renderMarkdown('```future\nstill readable\n```', context)[0] as ReactElement<{ className: string; 'data-lang': string }>;
-    expect(node.props.className).toBe('codeblock');
+    expect(node.props.className.split(' ')).toContain('codeblock');
+    expect(node.props.className.split(' ')).toContain('sk-code');
     expect(node.props['data-lang']).toBe('future');
   });
 });

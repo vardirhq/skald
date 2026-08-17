@@ -581,7 +581,7 @@ export function EditorView({
                   onSelectionChange={(selection) => { liveSelectionRef.current = selection; }}
                 />
               ) : (
-                <div className="editor-body">
+                <div className="editor-body sk-note">
                   {body.trim() ? (
                     renderMarkdown(body, mdCtx)
                   ) : (
@@ -1203,7 +1203,7 @@ function LiveMarkdownEditor({
   };
 
   return (
-    <div className="editor-body editor-body--live">
+    <div className="editor-body editor-body--live sk-note">
       {blocks.map((block, index) => {
         if (index === activeIndex) {
           return (
