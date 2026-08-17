@@ -2,7 +2,7 @@ import { Fragment, type ReactNode } from 'react';
 import { extractTasks } from '../src-shared/tasks';
 import { parseWikilink } from '../src-shared/wikilinks';
 import type { AttachmentRef } from '../src-shared/types';
-import { parseDocumentTree, type DocumentNode } from '../src-shared/documentTree';
+import { parseDocumentTree, type SemanticContainerNode } from '../src-shared/documentTree';
 import { extensionRegistry } from './extensions/registry';
 
 // Markdown → React, emitting exactly the DOM the design system styles.
@@ -32,18 +32,15 @@ const OL_LINE = /^\s*\d+[.)]\s+/;
 /** Render a complete Markdown body through Skald's semantic document model. */
 export function renderMarkdown(body: string, ctx: MdContext): ReactNode[] {
   const document = parseDocumentTree(body);
-  return document.children.map((node) => renderDocumentNode(node, ctx));
+  return document.children.flatMap((node) => {
+    if (node.type === 'block') {
+      return renderFlatMarkdown(node.raw, { ...ctx, lineOffset: ctx.lineOffset + node.startLine });
+    }
+    return [renderContainer(node, ctx)];
+  });
 }
 
-function renderDocumentNode(node: DocumentNode, ctx: MdContext): ReactNode {
-  if (node.type === 'block') {
-    return (
-      <Fragment key={node.id}>
-        {renderFlatMarkdown(node.raw, { ...ctx, lineOffset: ctx.lineOffset + node.startLine })}
-      </Fragment>
-    );
-  }
-
+function renderContainer(node: SemanticContainerNode, ctx: MdContext): ReactNode {
   return (
     <section
       key={node.id}
@@ -52,14 +49,12 @@ function renderDocumentNode(node: DocumentNode, ctx: MdContext): ReactNode {
       data-skald-container="1"
     >
       <div className="sk-container__content">
-        {node.children.map((child) => (
-          <Fragment key={child.id}>
-            {renderFlatMarkdown(child.raw, {
-              ...ctx,
-              lineOffset: ctx.lineOffset + child.startLine,
-            })}
-          </Fragment>
-        ))}
+        {node.children.flatMap((child) =>
+          renderFlatMarkdown(child.raw, {
+            ...ctx,
+            lineOffset: ctx.lineOffset + child.startLine,
+          })
+        )}
       </div>
     </section>
   );
